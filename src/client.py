@@ -4,6 +4,7 @@ import ast
 import logging
 import json
 import os.path
+import time
 
 import jsonpickle
 
@@ -140,6 +141,7 @@ class Client:
                     break
                 try_count += 1
                 print(f"Retrying: chunk {seq_no}, attempt {try_count}")
+                time.sleep(cfg.CLIENT_RETRY_INTERVAL)
             else:
                 request = dfs_file_path + ":" + curr_chunk_handle
                 ret_status = self.master_stub.commit_chunk(hybrid_dfs_pb2.String(str=request))

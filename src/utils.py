@@ -67,51 +67,6 @@ class File:
         return self.__repr__()
 
 
-log_cfg = '''
-{{
-    "version": 1,
-    "disable_existing_loggers": false,
-    "formatters": {{
-        "simple": {{
-            "format": "%(message)s"
-        }},
-        "debug": {{
-            "format": "%(asctime)s %(levelname)s:%(message)s",
-            "datefmt": "%Y-%m-%d %H:%M"
-        }}
-    }},
-    "filters": {{
-        "info_and_below": {{
-            "()" : "utils.filter_maker",
-            "level": "INFO"
-        }}
-    }},
-    "handlers": {{
-        "stdout": {{
-            "class": "logging.StreamHandler",
-            "formatter": "debug",
-            "stream": "ext://sys.stdout"
-        }},
-        "file": {{
-            "class": "logging.FileHandler",
-            "formatter": "simple",
-            "filename": "{0}",
-            "mode": "a",
-            "level": "INFO",
-            "filters": ["info_and_below"]
-        }}
-    }},
-    "root": {{
-        "level": "DEBUG",
-        "handlers": [
-            "stdout",
-            "file"
-        ]
-    }}
-}}
-'''.format(cfg.MASTER_LOG)
-
-
 def filter_maker(level):
     level = getattr(logging, level)
 
@@ -124,7 +79,7 @@ def filter_maker(level):
 class Logger:
     def __init__(self, log_file):
         try:
-            logging.config.dictConfig(json.loads(log_cfg))
+            logging.config.dictConfig(json.loads(cfg.LOGGER_CONFIG))
             self.log = logging.getLogger("DFS_master")
             print(f"Master server started. Logging to {log_file}")
         except EnvironmentError as e:

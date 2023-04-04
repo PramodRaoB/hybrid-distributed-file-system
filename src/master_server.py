@@ -53,7 +53,6 @@ class MetaData:
                             file_path = line.pop(0)
                             chunk_handle = line.pop(0)
                             new_locs = ' '.join(line)
-                            print(new_locs)
                             new_locs = jsonpickle.decode(new_locs)
                             file = self.files[file_path]
                             chunk = file.chunks[chunk_handle]
@@ -98,7 +97,7 @@ class MasterServer:
         self.meta = MetaData(cfg.MASTER_LOG)
         self.logger = Logger(cfg.MASTER_LOG)
         self.all_chunk_servers = cfg.CHUNK_LOCS
-        self.available_chunk_servers = cfg.CHUNK_LOCS
+        self.available_chunk_servers = []
 
     def __get_new_locs(self):
         return random.sample(self.available_chunk_servers,
@@ -144,9 +143,8 @@ class MasterServer:
                 chunk_stub = hybrid_dfs_pb2_grpc.ChunkToMasterStub(channel)
                 try:
                     ret_status = chunk_stub.commit_chunk(hybrid_dfs_pb2.String(str=chunk.handle))
-                    print(ret_status.message)
                 except grpc.RpcError as e:
-                    print(e)
+                    self.logger.log.error(e)
         return Status(0, "Committed chunks")
 
     def file_create_status(self, file_path: str, status: int):
@@ -163,9 +161,9 @@ class MasterServer:
             chunk_stub = hybrid_dfs_pb2_grpc.ChunkToMasterStub(channel)
             try:
                 ret_status = chunk_stub.delete_chunks(stream_list(chunk_handles))
-                print(ret_status.message)
+                self.logger.log.debug(ret_status.message)
             except grpc.RpcError as e:
-                print(e)
+                self.logger.log.error(e)
         return Status(0, "Chunk deletion handled")
 
     def delete_file(self, file_path: str, check_for_commit: int):
@@ -182,7 +180,7 @@ class MasterServer:
         loc_list = chunks_to_locs(list(file.chunks.values()))
         for k, v in loc_list.items():
             ret_status = self.delete_chunks(k, v)
-            print(ret_status.message)
+            self.logger.log.debug(ret_status.message)
         self.meta.files.pop(file_path, None)
         return Status(0, "File deletion successful")
 
@@ -205,24 +203,38 @@ class MasterServer:
             return Status(-1, "EOF reached")
         return Status(0, jsonpickle.encode(list(file.chunks.items())[chunk_index][1]))
 
-    def query_chunks(self, request_iterator):
+    def query_chunks(self, loc: str, request_iterator):
         for request in request_iterator:
             chunk_handle = request.str
+            send_request = chunk_handle + ":" + str(ChunkStatus.DELETED.value)
             if chunk_handle not in self.meta.chunk_to_file.keys():
                 # instruct to delete
-                send_request = chunk_handle + ":" + str(ChunkStatus.DELETED.value)
                 yield hybrid_dfs_pb2.String(str=send_request)
                 continue
             file_path = self.meta.chunk_to_file[chunk_handle]
             if file_path not in self.meta.files.keys():
                 # instruct to delete
-                send_request = chunk_handle + ":" + str(ChunkStatus.DELETED.value)
                 yield hybrid_dfs_pb2.String(str=send_request)
                 continue
             file = self.meta.files[file_path]
             chunk = file.chunks[chunk_handle]
+            if loc not in chunk.locs:
+                yield hybrid_dfs_pb2.String(str=send_request)
+                continue
             send_request = chunk_handle + ":" + str(chunk.status.value)
             yield hybrid_dfs_pb2.String(str=send_request)
+
+    def send_heartbeat(self):
+        for loc in self.all_chunk_servers:
+            with grpc.insecure_channel(loc) as channel:
+                chunk_stub = hybrid_dfs_pb2_grpc.ChunkToMasterStub(channel)
+                try:
+                    ret_status = chunk_stub.heartbeat(hybrid_dfs_pb2.String(str=""), timeout=1)
+                    if loc not in self.available_chunk_servers:
+                        self.available_chunk_servers.append(loc)
+                except grpc.RpcError as e:
+                    if loc in self.available_chunk_servers:
+                        self.available_chunk_servers.remove(loc)
 
 
 class MasterToClientServicer(hybrid_dfs_pb2_grpc.MasterToClientServicer):
@@ -273,7 +285,11 @@ class MasterToChunkServicer(hybrid_dfs_pb2_grpc.MasterToChunkServicer):
         self.master = server
 
     def query_chunks(self, request_iterator, context):
-        return self.master.query_chunks(request_iterator)
+        loc = None
+        for request in request_iterator:
+            loc = request.str
+            break
+        return self.master.query_chunks(loc, request_iterator)
 
 
 def serve():
@@ -283,7 +299,13 @@ def serve():
     hybrid_dfs_pb2_grpc.add_MasterToChunkServicer_to_server(MasterToChunkServicer(master_server), server)
     server.add_insecure_port(cfg.MASTER_LOC)
     server.start()
-    server.wait_for_termination()
+    # server.wait_for_termination()
+    try:
+        while True:
+            time.sleep(cfg.HEARTBEAT_INTERVAL)
+            master_server.send_heartbeat()
+    except KeyboardInterrupt as e:
+        pass
 
 
 if __name__ == '__main__':

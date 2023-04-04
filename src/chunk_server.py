@@ -1,16 +1,14 @@
 import os.path
 import sys
 from concurrent import futures
-import logging
 from pathlib import Path
-from sys import stderr
 
 import grpc
 import jsonpickle
 
 import hybrid_dfs_pb2
 import hybrid_dfs_pb2_grpc
-from utils import Status, Chunk, stream_list, ChunkStatus
+from utils import Status, stream_list, ChunkStatus
 import config as cfg
 
 
@@ -30,9 +28,13 @@ def stream_chunk(file_path: str, offset: int, num_bytes: int):
         raise OSError(e)
 
 
+def heartbeat():
+    return Status(0, "Alive!")
+
+
 class ChunkServer:
-    def __init__(self, port, root_dir):
-        self.port = port
+    def __init__(self, loc, root_dir):
+        self.loc = loc
         self.root_dir = root_dir
         self.is_visible = {}
         try:
@@ -44,7 +46,7 @@ class ChunkServer:
 
     def wake_up(self):
         curr_dir = os.fsencode(self.root_dir)
-        chunks = []
+        chunks = [self.loc]
         try:
             for chunk in os.listdir(curr_dir):
                 chunk_handle = os.fsdecode(chunk)
@@ -193,6 +195,10 @@ class ChunkToMasterServicer(hybrid_dfs_pb2_grpc.ChunkToMasterServicer):
         ret_status = self.server.delete_chunks(request_iterator)
         return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
 
+    def heartbeat(self, request, context):
+        ret_status = heartbeat()
+        return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
+
 
 def serve():
     try:
@@ -201,7 +207,7 @@ def serve():
         print(e)
         print(f"Enter a valid server index in the range [0, {cfg.NUM_CHUNK_SERVERS - 1}]")
         exit(1)
-    chunk_server = ChunkServer(cfg.CHUNK_PORTS[server_index], cfg.CHUNK_ROOT_DIRS[server_index])
+    chunk_server = ChunkServer(cfg.CHUNK_LOCS[server_index], cfg.CHUNK_ROOT_DIRS[server_index])
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     hybrid_dfs_pb2_grpc.add_ChunkToClientServicer_to_server(ChunkToClientServicer(chunk_server), server)
     hybrid_dfs_pb2_grpc.add_ChunkToChunkServicer_to_server(ChunkToChunkServicer(chunk_server), server)
