@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package hybridDFS;
+
+// Interface exported by the master server
+service MasterToClient {
+  //
+}
+
+// Interface exported by the chunk server
+service ChunkToClient {
+  //
+}
