@@ -9,6 +9,9 @@ class Chunk:
         self.handle = chunk_handle
         self.locs = chunk_locs
 
-    def __str__(self):
+    def __repr__(self):
         res = self.handle + ": " + str(self.locs)
         return res
+
+    def __str__(self):
+        return self.__repr__()

@@ -18,7 +18,8 @@ class Client:
     def __init__(self):
         self.master_channel = grpc.insecure_channel(cfg.MASTER_IP + ":" + cfg.MASTER_SERVER)
         self.master_stub = hybrid_dfs_pb2_grpc.MasterToClientStub(self.master_channel)
-        self.chunk_channels = [grpc.insecure_channel(cfg.CHUNK_IPS[i] + ":" + cfg.CHUNK_SERVERS[i]) for i in range(cfg.NUM_CHUNK_SERVERS)]
+        self.chunk_channels = [grpc.insecure_channel(cfg.CHUNK_IPS[i] + ":" + cfg.CHUNK_SERVERS[i]) for i in
+                               range(cfg.NUM_CHUNK_SERVERS)]
         self.chunk_stubs = [hybrid_dfs_pb2_grpc.ChunkToClientStub(channel) for channel in self.chunk_channels]
 
     def close(self):
@@ -44,12 +45,23 @@ class Client:
             return
         num_chunks = num_bytes // cfg.CHUNK_SIZE + int(num_bytes % cfg.CHUNK_SIZE != 0)
         request = dfs_file_path + ":" + str(num_chunks)
-        ret = self.master_stub.create_file(hybrid_dfs_pb2.String(str=request))
+        try:
+            ret = self.master_stub.create_file(hybrid_dfs_pb2.String(str=request), timeout=cfg.CLIENT_RPC_TIMEOUT)
+        except grpc.RpcError as e:
+            print(e)
+            return
         if ret.code != 0:
             print(ret.message)
             return
         chunk_details = jsonpickle.decode(ret.message)
-        print(chunk_details)
+        try:
+            with open(local_file_path, "r", buffering=cfg.PACKET_SIZE) as f:
+                while True:
+                    packet = f.read(cfg.PACKET_SIZE)
+                    if packet == 0:
+                        break
+        except EnvironmentError as e:
+            print(e)
 
 
 def read_file(client: Client):
