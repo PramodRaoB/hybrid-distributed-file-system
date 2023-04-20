@@ -1,1 +1,8 @@
-chunk_logging_file = "chunk.log"
+# In bytes
+CHUNK_SIZE = 1024
+REPLICATION_FACTOR = 3
+CHUNK_SERVERS = ["50052"]
+CHUNK_IPS = ["localhost"]
+NUM_CHUNK_SERVERS = len(CHUNK_IPS)
+MASTER_SERVER = "50051"
+MASTER_IP = "localhost"

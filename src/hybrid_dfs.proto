@@ -4,7 +4,7 @@ package hybridDFS;
 
 // Interface exported by the master server
 service MasterToClient {
-  //
+  rpc create_file (String) returns (Status) {}
 }
 
 // Interface exported by the chunk server

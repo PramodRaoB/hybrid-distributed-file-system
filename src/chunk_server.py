@@ -6,7 +6,7 @@ from sys import stderr
 import grpc
 import hybrid_dfs_pb2
 import hybrid_dfs_pb2_grpc
-import utils
+from utils import Status
 
 
 class ChunkServer:
@@ -19,9 +19,9 @@ class ChunkServer:
             with open(os.path.join(self.root_dir, chunk_handle), "r") as f:
                 f.seek(offset)
                 ret = f.read(num_bytes)
-            return utils.Status(0, ret)
+            return Status(0, ret)
         except OSError as e:
-            return utils.Status(-1, e.strerror)
+            return Status(-1, e.strerror)
 
 
 class ChunkToClientServicer(hybrid_dfs_pb2_grpc.ChunkToClientServicer):
