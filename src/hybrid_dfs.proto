@@ -5,11 +5,18 @@ package hybridDFS;
 // Interface exported by the master server
 service MasterToClient {
   rpc create_file (String) returns (Status) {}
+  rpc delete_file (String) returns (Status) {}
+  rpc list_files (String) returns (Status) {}
 }
 
 // Interface exported by the chunk server
 service ChunkToClient {
   rpc read_file (String) returns (Status) {}
+  rpc create_chunk (stream String) returns (Status) {}
+}
+
+service ChunkToChunk {
+  rpc create_chunk (stream String) returns (Status) {}
 }
 
 message String {
