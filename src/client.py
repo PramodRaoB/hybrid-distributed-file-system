@@ -51,7 +51,47 @@ class Client:
         self.close()
 
     def read_file(self, file_path: str, offset: int, num_bytes: int):
-        request = file_path + ':' + str(offset) + ":" + str(num_bytes)
+        if offset < 0 or num_bytes < -1:
+            print("Invalid input")
+            return
+        if num_bytes == 0:
+            print("")
+            return
+        start = offset // cfg.CHUNK_SIZE
+        end = -1
+        if num_bytes != -1:
+            end = (start + num_bytes - 1) // cfg.CHUNK_SIZE
+        index = start
+        while end == -1 or index <= end:
+            request = file_path + ":" + str(index)
+            ret_status = self.master_stub.get_chunk_details(hybrid_dfs_pb2.String(str=request))
+            if ret_status.code != 0:
+                if end != -1:
+                    print("Error: Failed to fetch chunk")
+                    print(ret_status.message)
+                return
+            chunk = jsonpickle.decode(ret_status.message)
+            chunk_start = 0
+            if index == start:
+                chunk_start = offset % cfg.CHUNK_SIZE
+            chunk_end = cfg.CHUNK_SIZE
+            if index == end:
+                chunk_end = (offset + num_bytes) % cfg.CHUNK_SIZE
+            request = chunk.handle + ":" + str(chunk_start) + ":" + str(chunk_end - chunk_start)
+            success = False
+            for loc in chunk.locs:
+                data_iterator = self.chunk_stubs[loc].read_chunk(hybrid_dfs_pb2.String(str=request))
+                try:
+                    for data in data_iterator:
+                        print(data.str, end='')
+                    success = True
+                    break
+                except EnvironmentError as e:
+                    pass
+            if not success:
+                print("Error: Failed to fetch chunk. Aborting")
+                return
+            index += 1
 
     def create_file(self, local_file_path: str, dfs_file_path: str):
         try:
@@ -123,8 +163,9 @@ class Client:
 
 def run():
     with Client() as client:
-        client.create_file("/home/jade/temp2.txt", "temp2.txt")
+        client.create_file("/home/jade/temp.txt", "temp.txt")
         # client.list_files(1)
+        client.read_file("temp.txt", 0, -1)
         # client.delete_file("client.py")
 
 

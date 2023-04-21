@@ -106,6 +106,14 @@ class MasterServer:
             ret.append(v)
         return Status(0, jsonpickle.encode(ret))
 
+    def get_chunk_details(self, file_path: str, chunk_index: int):
+        if not self.meta.does_exist(file_path):
+            return Status(-1, "File not found")
+        file = self.meta.files[file_path]
+        if chunk_index >= len(file.chunks):
+            return Status(-1, "EOF reached")
+        return Status(0, jsonpickle.encode(list(file.chunks.items())[chunk_index][1]))
+
 
 class MasterToClientServicer(hybrid_dfs_pb2_grpc.MasterToClientServicer):
     """Provides methods that implements functionality of HybridDFS Master server"""
@@ -142,6 +150,12 @@ class MasterToClientServicer(hybrid_dfs_pb2_grpc.MasterToClientServicer):
         file_path, status = request.str.split(':')
         status = int(status)
         ret_status = self.master.file_create_status(file_path, status)
+        return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
+
+    def get_chunk_details(self, request, context):
+        file_path, chunk_index = request.str.split(':')
+        chunk_index = int(chunk_index)
+        ret_status = self.master.get_chunk_details(file_path, chunk_index)
         return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
 
 

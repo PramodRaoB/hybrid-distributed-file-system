@@ -14,6 +14,22 @@ from utils import Status, Chunk
 import config as cfg
 
 
+def stream_chunk(file_path: str, offset: int, num_bytes: int):
+    try:
+        bytes_read = 0
+        with open(file_path, "r", buffering=cfg.PACKET_SIZE) as f:
+            f.seek(offset)
+            while bytes_read < num_bytes:
+                packet = f.read(min(cfg.PACKET_SIZE, num_bytes - bytes_read))
+                bytes_read += cfg.PACKET_SIZE
+                if len(packet) == 0:
+                    break
+                yield hybrid_dfs_pb2.String(str=packet)
+    except EnvironmentError as e:
+        print(e)
+        raise Exception(e)
+
+
 class ChunkServer:
     def __init__(self, port, root_dir):
         self.port = port
@@ -25,14 +41,9 @@ class ChunkServer:
             print(e)
             exit(1)
 
-    def read_file(self, chunk_handle, offset: int, num_bytes: int):
-        try:
-            with open(os.path.join(self.root_dir, chunk_handle), "r") as f:
-                f.seek(offset)
-                ret = f.read(num_bytes)
-            return Status(0, ret)
-        except OSError as e:
-            return Status(-1, e.strerror)
+    def read_chunk(self, chunk_handle, offset: int, num_bytes: int):
+        data_iterator = stream_chunk(os.path.join(self.root_dir, chunk_handle), offset, num_bytes)
+        return data_iterator
 
     def write_and_yield_chunk(self, chunk_handle: str, loc_list, data_iterator):
         yield hybrid_dfs_pb2.String(str=chunk_handle)
@@ -82,13 +93,6 @@ class ChunkToClientServicer(hybrid_dfs_pb2_grpc.ChunkToClientServicer):
     def __init__(self, server: ChunkServer):
         self.server = server
 
-    def read_file(self, request, context):
-        chunk_handle, offset, num_bytes = request.str.split(':')
-        offset = int(offset)
-        num_bytes = int(num_bytes)
-        ret_status = self.server.read_file(chunk_handle, offset, num_bytes)
-        return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
-
     def create_chunk(self, request_iterator, context):
         chunk_handle = None
         loc_list = None
@@ -100,6 +104,12 @@ class ChunkToClientServicer(hybrid_dfs_pb2_grpc.ChunkToClientServicer):
             break
         ret_status = self.server.create_chunk(chunk_handle, loc_list, request_iterator)
         return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
+
+    def read_chunk(self, request, context):
+        chunk_handle, offset, num_bytes = request.str.split(':')
+        offset = int(offset)
+        num_bytes = int(num_bytes)
+        return self.server.read_chunk(chunk_handle, offset, num_bytes)
 
 
 class ChunkToChunkServicer(hybrid_dfs_pb2_grpc.ChunkToChunkServicer):

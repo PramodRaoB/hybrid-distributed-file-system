@@ -10,12 +10,13 @@ service MasterToClient {
   rpc get_chunk_locs (String) returns (Status) {}
   rpc commit_chunk (String) returns (Status) {}
   rpc file_create_status (String) returns (Status) {}
+  rpc get_chunk_details (String) returns (Status) {}
 }
 
 // Interface exported by the chunk server
 service ChunkToClient {
-  rpc read_file (String) returns (Status) {}
   rpc create_chunk (stream String) returns (Status) {}
+  rpc read_chunk (String) returns (stream String) {}
 }
 
 service ChunkToChunk {
