@@ -67,12 +67,12 @@ class ChunkServer:
                 destination_stub = hybrid_dfs_pb2_grpc.ChunkToChunkStub(channel)
                 return destination_stub.create_chunk(self.write_and_yield_chunk(chunk_handle, loc_list, data_iterator))
 
-    def commit_chunks(self, request_iterator):
-        for chunk in request_iterator:
-            if chunk.str in self.is_visible.keys():
-                self.is_visible[chunk.str] = True
-            else:
-                return Status(-1, "Chunk missing")
+    def commit_chunk(self, chunk_handle: str):
+        if chunk_handle in self.is_visible.keys():
+            self.is_visible[chunk_handle] = True
+        else:
+            # TODO: Cant happen?
+            pass
         return Status(0, "Committed")
 
 
@@ -123,8 +123,8 @@ class ChunkToMasterServicer(hybrid_dfs_pb2_grpc.ChunkToMasterServicer):
     def __init__(self, server: ChunkServer):
         self.server = server
 
-    def commit_chunks(self, request_iterator, context):
-        ret_status = self.server.commit_chunks(request_iterator)
+    def commit_chunk(self, request, context):
+        ret_status = self.server.commit_chunk(request.str)
         return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
 
 

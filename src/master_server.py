@@ -52,35 +52,30 @@ class MasterServer:
         return random.sample(self.available_chunk_servers,
                              min(cfg.REPLICATION_FACTOR, len(self.available_chunk_servers)))
 
-    def create_file(self, file_path: str, num_chunks: int):
+    def create_file(self, file_path: str):
         if self.meta.does_exist(file_path):
             return Status(-1, "File already exists")
         # TODO: Check available space before creating
         new_file = File(file_path, time.time())
-        for ch in range(num_chunks):
-            handle = get_new_handle()
-            locs = self.__get_new_locs()
-            if len(locs) == 0:
-                return Status(-1, "No available chunk servers")
-            new_chunk = Chunk(handle, locs)
-            new_file.chunks[handle] = new_chunk
         self.meta.files[file_path] = new_file
-        return Status(0, jsonpickle.encode(list(new_file.chunks.values())))
+        return Status(0, "File created")
 
-    def retry_chunk(self, file_path: str, chunk_handle: str):
+    def get_chunk_locs(self, file_path: str, chunk_handle: str):
         if not self.meta.does_exist(file_path):
             return Status(-1, "Requested file does not exist")
         file = self.meta.files[file_path]
+        if not chunk_handle:
+            chunk_handle = get_new_handle()
+            file.chunks[chunk_handle] = Chunk(chunk_handle, [])
         chunk = file.chunks[chunk_handle]
         chunk.locs = self.__get_new_locs()
-        return Status(0, jsonpickle.encode(chunk.locs))
+        return Status(0, jsonpickle.encode(chunk))
 
-    def commit_chunks(self, chunks):
-        loc_list = chunks_to_locs(chunks)
-        for k, v in loc_list.items():
-            with grpc.insecure_channel(k) as channel:
+    def commit_chunk(self, chunk):
+        for loc in chunk.locs:
+            with grpc.insecure_channel(loc) as channel:
                 chunk_stub = hybrid_dfs_pb2_grpc.ChunkToMasterStub(channel)
-                ret_status = chunk_stub.commit_chunks(stream_list(v))
+                ret_status = chunk_stub.commit_chunk(hybrid_dfs_pb2.String(str=chunk.handle))
             if ret_status.code != 0:
                 return ret_status
         return Status(0, "Committed chunks")
@@ -92,12 +87,8 @@ class MasterServer:
             return Status(0, "File removed")
         else:
             file = self.meta.files[file_path]
-            ret_status = self.commit_chunks(file.chunks.values())
-            if ret_status.code != 0:
-                print(ret_status.message)
-                return ret_status
             file.is_committed = True
-            return ret_status
+            return Status(0, "File committed")
 
     def delete_file(self, file_path: str):
         if not self.meta.does_exist(file_path):
@@ -123,9 +114,8 @@ class MasterToClientServicer(hybrid_dfs_pb2_grpc.MasterToClientServicer):
         self.master = server
 
     def create_file(self, request, context):
-        file_path, num_chunks = request.str.split(':')
-        num_chunks = int(num_chunks)
-        ret_status = self.master.create_file(file_path, num_chunks)
+        file_path = request.str
+        ret_status = self.master.create_file(file_path)
         return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
 
     def delete_file(self, request, context):
@@ -138,9 +128,14 @@ class MasterToClientServicer(hybrid_dfs_pb2_grpc.MasterToClientServicer):
         ret_status = self.master.list_files(hidden)
         return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
 
-    def retry_chunk(self, request, context):
+    def get_chunk_locs(self, request, context):
         file_path, chunk_handle = request.str.split(':')
-        ret_status = self.master.retry_chunk(file_path, chunk_handle)
+        ret_status = self.master.get_chunk_locs(file_path, chunk_handle)
+        return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
+
+    def commit_chunk(self, request, context):
+        chunk = jsonpickle.decode(request.str)
+        ret_status = self.master.commit_chunk(chunk)
         return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
 
     def file_create_status(self, request, context):

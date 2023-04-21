@@ -52,7 +52,6 @@ class Client:
 
     def read_file(self, file_path: str, offset: int, num_bytes: int):
         request = file_path + ':' + str(offset) + ":" + str(num_bytes)
-        ret_status = self.chunk_stubs
 
     def create_file(self, local_file_path: str, dfs_file_path: str):
         try:
@@ -61,7 +60,7 @@ class Client:
             print(e)
             return
         num_chunks = num_bytes // cfg.CHUNK_SIZE + int(num_bytes % cfg.CHUNK_SIZE != 0)
-        request = dfs_file_path + ":" + str(num_chunks)
+        request = dfs_file_path
         try:
             ret = self.master_stub.create_file(hybrid_dfs_pb2.String(str=request), timeout=cfg.CLIENT_RPC_TIMEOUT)
         except grpc.RpcError as e:
@@ -70,29 +69,35 @@ class Client:
         if ret.code != 0:
             print(ret.message)
             return
-        chunk_details = jsonpickle.decode(ret.message)
         seq_no = 0
         try_count = 0
         success = True
-        while seq_no < len(chunk_details):
-            chunk = chunk_details[seq_no]
+        curr_chunk_handle = ""
+        while seq_no < num_chunks:
+            request = dfs_file_path + ":" + curr_chunk_handle
+            ret_status = self.master_stub.get_chunk_locs(hybrid_dfs_pb2.String(str=request))
+            if ret_status.code != 0:
+                print(ret_status.message)
+                success = False
+                break
+            chunk = jsonpickle.decode(ret_status.message)
+            curr_chunk_handle = chunk.handle
             request_iterator = stream_chunk(local_file_path, seq_no, chunk.handle, chunk.locs)
             ret_status = self.chunk_stubs[chunk.locs[0]].create_chunk(request_iterator, timeout=cfg.CLIENT_RPC_TIMEOUT)
             print(ret_status.message)
             if ret_status.code != 0:
                 if try_count == cfg.CLIENT_RETRY_LIMIT:
-                    print("Error: Could not create file. Abandoning.")
+                    print("Error: Could not create file. Aborting.")
                     success = False
                     break
                 try_count += 1
-                print(f"Retrying: {try_count}")
-                request = dfs_file_path + ":" + chunk.handle
-                ret_status = self.master_stub.retry_chunk(hybrid_dfs_pb2.String(str=request))
-                print(ret_status.message)
-                chunk.locs = jsonpickle.decode(ret_status.message)
+                print(f"Retrying: chunk {seq_no}, attempt {try_count}")
             else:
+                request = jsonpickle.encode(chunk)
+                ret_status = self.master_stub.commit_chunk(hybrid_dfs_pb2.String(str=request))
                 try_count = 0
                 seq_no += 1
+                curr_chunk_handle = ""
         if success:
             request = dfs_file_path + ":0"
             ret_status = self.master_stub.file_create_status(hybrid_dfs_pb2.String(str=request))
@@ -114,20 +119,6 @@ class Client:
         ret_status = self.master_stub.list_files(hybrid_dfs_pb2.String(str=str(hidden)))
         files = jsonpickle.decode(ret_status.message)
         print(files)
-
-
-def read_file(client: Client):
-    request = "ab.txt:0:12"
-    ret_status = client.chunk_stubs[0].read_file(hybrid_dfs_pb2.String(str=request))
-    print(ret_status.message)
-
-
-def create_file(client: Client):
-    request = "ab1.txt:3"
-    ret_status = client.master_stub.create_file(hybrid_dfs_pb2.String(str=request))
-    if ret_status.code != 0:
-        print(ret_status.message)
-        return
 
 
 def run():
