@@ -7,6 +7,7 @@ service MasterToClient {
   rpc create_file (String) returns (Status) {}
   rpc delete_file (String) returns (Status) {}
   rpc list_files (String) returns (Status) {}
+  rpc retry_chunk (String) returns (Status) {}
 }
 
 // Interface exported by the chunk server

@@ -57,6 +57,14 @@ class MasterServer:
         self.meta.files[file_path] = new_file
         return Status(0, jsonpickle.encode(list(new_file.chunks.values())))
 
+    def retry_chunk(self, file_path: str, chunk_handle: str):
+        if not self.meta.does_exist(file_path):
+            return Status(-1, "Requested file does not exist")
+        file = self.meta.files[file_path]
+        chunk = file.chunks[chunk_handle]
+        chunk.locs = self.__get_new_locs()
+        return Status(0, jsonpickle.encode(chunk.locs))
+
     def delete_file(self, file_path: str):
         if not self.meta.does_exist(file_path):
             return Status(-1, "File does not exist")
@@ -96,14 +104,18 @@ class MasterToClientServicer(hybrid_dfs_pb2_grpc.MasterToClientServicer):
         ret_status = self.master.list_files(hidden)
         return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
 
+    def retry_chunk(self, request, context):
+        file_path, chunk_handle = request.str.split(':')
+        ret_status = self.master.retry_chunk(file_path, chunk_handle)
+        return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
+
 
 def serve():
     master_server = MasterServer()
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     hybrid_dfs_pb2_grpc.add_MasterToClientServicer_to_server(
         MasterToClientServicer(master_server), server)
-    # server.add_insecure_port('[::]:50051')
-    server.add_insecure_port(cfg.MASTER_IP + ":" + cfg.MASTER_SERVER)
+    server.add_insecure_port(cfg.MASTER_LOC)
     server.start()
     server.wait_for_termination()
 

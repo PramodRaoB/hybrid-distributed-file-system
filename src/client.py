@@ -31,7 +31,7 @@ def stream_chunk(file_path: str, chunk_index: int, chunk_handle: str, loc_list):
 
 class Client:
     def __init__(self):
-        self.master_channel = grpc.insecure_channel(cfg.MASTER_IP + ":" + cfg.MASTER_SERVER)
+        self.master_channel = grpc.insecure_channel(cfg.MASTER_IP + ":" + cfg.MASTER_PORT)
         self.master_stub = hybrid_dfs_pb2_grpc.MasterToClientStub(self.master_channel)
         self.chunk_channels = [grpc.insecure_channel(cfg.CHUNK_IPS[i] + ":" + cfg.CHUNK_PORTS[i]) for i in
                                range(cfg.NUM_CHUNK_SERVERS)]
@@ -71,13 +71,26 @@ class Client:
             print(ret.message)
             return
         chunk_details = jsonpickle.decode(ret.message)
-        for seq_no in range(len(chunk_details)):
+        seq_no = 0
+        try_count = 0
+        while seq_no < len(chunk_details):
             chunk = chunk_details[seq_no]
             request_iterator = stream_chunk(local_file_path, seq_no, chunk.handle, chunk.locs)
             ret_status = self.chunk_stubs[chunk.locs[0]].create_chunk(request_iterator, timeout=cfg.CLIENT_RPC_TIMEOUT)
             print(ret_status.message)
             if ret_status.code != 0:
-                pass
+                if try_count == cfg.CLIENT_RETRY_LIMIT:
+                    print("Error: Could not create file. Abandoning.")
+                    return
+                try_count += 1
+                print(f"Retrying: {try_count}")
+                request = dfs_file_path + ":" + chunk.handle
+                ret_status = self.master_stub.retry_chunk(hybrid_dfs_pb2.String(str=request))
+                print(ret_status.message)
+                chunk.locs = jsonpickle.decode(ret_status.message)
+            else:
+                try_count = 0
+                seq_no += 1
 
     def delete_file(self, file_path: str):
         ret_status = self.master_stub.delete_file(hybrid_dfs_pb2.String(str=file_path))
@@ -105,8 +118,8 @@ def create_file(client: Client):
 
 def run():
     with Client() as client:
-        # client.create_file("./client.py", "client.py")
-        client.list_files(1)
+        client.create_file("./client.py", "client.py")
+        # client.list_files(1)
         # client.delete_file("client.py")
 
 

@@ -1,6 +1,8 @@
 import os.path
+import sys
 from concurrent import futures
 import logging
+from pathlib import Path
 from sys import stderr
 
 import grpc
@@ -9,6 +11,7 @@ import jsonpickle
 import hybrid_dfs_pb2
 import hybrid_dfs_pb2_grpc
 from utils import Status, Chunk
+import config as cfg
 
 
 class ChunkServer:
@@ -16,6 +19,11 @@ class ChunkServer:
         self.port = port
         self.root_dir = root_dir
         self.is_visible = {}
+        try:
+            Path(self.root_dir).mkdir(parents=True, exist_ok=True)
+        except FileExistsError as e:
+            print(e)
+            exit(1)
 
     def read_file(self, chunk_handle, offset: int, num_bytes: int):
         try:
@@ -104,11 +112,18 @@ class ChunkToChunkServicer(hybrid_dfs_pb2_grpc.ChunkToChunkServicer):
 
 
 def serve():
-    chunk_server = ChunkServer("50052", "/tmp/chunk1")
+    server_index = None
+    try:
+        server_index = int(sys.argv[1])
+    except (ValueError, IndexError) as e:
+        print(e)
+        print(f"Enter a valid server index in the range [0, {cfg.NUM_CHUNK_SERVERS - 1}]")
+        exit(1)
+    chunk_server = ChunkServer(cfg.CHUNK_PORTS[server_index], cfg.CHUNK_ROOT_DIRS[server_index])
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
     hybrid_dfs_pb2_grpc.add_ChunkToClientServicer_to_server(
         ChunkToClientServicer(chunk_server), server)
-    server.add_insecure_port('[::]:50052')
+    server.add_insecure_port(cfg.CHUNK_LOCS[server_index])
     server.start()
     server.wait_for_termination()
 
