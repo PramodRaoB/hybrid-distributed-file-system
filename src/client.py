@@ -73,6 +73,7 @@ class Client:
         chunk_details = jsonpickle.decode(ret.message)
         seq_no = 0
         try_count = 0
+        success = True
         while seq_no < len(chunk_details):
             chunk = chunk_details[seq_no]
             request_iterator = stream_chunk(local_file_path, seq_no, chunk.handle, chunk.locs)
@@ -81,7 +82,8 @@ class Client:
             if ret_status.code != 0:
                 if try_count == cfg.CLIENT_RETRY_LIMIT:
                     print("Error: Could not create file. Abandoning.")
-                    return
+                    success = False
+                    break
                 try_count += 1
                 print(f"Retrying: {try_count}")
                 request = dfs_file_path + ":" + chunk.handle
@@ -91,6 +93,18 @@ class Client:
             else:
                 try_count = 0
                 seq_no += 1
+        if success:
+            request = dfs_file_path + ":0"
+            ret_status = self.master_stub.file_create_status(hybrid_dfs_pb2.String(str=request))
+            if ret_status.code != 0:
+                print("Could not create file: ", end='')
+                print(ret_status.message)
+            else:
+                print(ret_status.message)
+        else:
+            request = dfs_file_path + ":1"
+            self.master_stub.file_create_status(hybrid_dfs_pb2.String(str=request))
+            print("Error: Could not create file")
 
     def delete_file(self, file_path: str):
         ret_status = self.master_stub.delete_file(hybrid_dfs_pb2.String(str=file_path))
@@ -118,7 +132,7 @@ def create_file(client: Client):
 
 def run():
     with Client() as client:
-        client.create_file("./client.py", "client.py")
+        client.create_file("/home/jade/temp2.txt", "temp2.txt")
         # client.list_files(1)
         # client.delete_file("client.py")
 

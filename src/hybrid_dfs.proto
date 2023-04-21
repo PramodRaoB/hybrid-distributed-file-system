@@ -8,6 +8,7 @@ service MasterToClient {
   rpc delete_file (String) returns (Status) {}
   rpc list_files (String) returns (Status) {}
   rpc retry_chunk (String) returns (Status) {}
+  rpc file_create_status (String) returns (Status) {}
 }
 
 // Interface exported by the chunk server
@@ -18,6 +19,10 @@ service ChunkToClient {
 
 service ChunkToChunk {
   rpc create_chunk (stream String) returns (Status) {}
+}
+
+service ChunkToMaster {
+  rpc commit_chunks (stream String) returns (Status) {}
 }
 
 message String {
