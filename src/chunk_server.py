@@ -246,7 +246,7 @@ def serve():
     # server.wait_for_termination()
     try:
         while True:
-            time.sleep(cfg.CHUNK_CLEANUP_PERIOD)
+            time.sleep(cfg.CHUNK_CLEANUP_INTERVAL)
             print("cleaning chunks")
             chunk_server.chunk_cleanup()
     except KeyboardInterrupt as e:

@@ -1,5 +1,6 @@
 import os.path
 import random
+import threading
 import time
 import uuid
 from collections import OrderedDict
@@ -98,6 +99,8 @@ class MasterServer:
         self.logger = Logger(cfg.MASTER_LOG)
         self.all_chunk_servers = cfg.CHUNK_LOCS
         self.available_chunk_servers = []
+        self.files_lock = threading.Lock()
+        self.chunk_to_file_lock = threading.Lock()
 
     def __get_new_locs(self):
         return random.sample(self.available_chunk_servers,
@@ -109,7 +112,8 @@ class MasterServer:
         # TODO: Check available space before creating
         new_file = File(file_path, time.time())
         self.logger.add_file(new_file)
-        self.meta.files[file_path] = new_file
+        with self.files_lock:
+            self.meta.files[file_path] = new_file
         return Status(0, "File created")
 
     def get_chunk_locs(self, file_path: str, chunk_handle: str):
@@ -124,11 +128,12 @@ class MasterServer:
             return Status(-1, "Requested chunk does not exist")
         chunk = file.chunks[chunk_handle]
         new_locs = self.__get_new_locs()
-        # if len(new_locs) != cfg.REPLICATION_FACTOR:
-        #     return Status(0, "Too few chunkservers. Could not replicate chunk")
+        if len(new_locs) != cfg.REPLICATION_FACTOR:
+            return Status(-1, "Too few chunkservers. Could not replicate chunk")
         self.logger.change_chunk_locs(file_path, chunk_handle, new_locs)
         chunk.locs = new_locs
-        self.meta.chunk_to_file[chunk.handle] = file.path
+        with self.chunk_to_file_lock:
+            self.meta.chunk_to_file[chunk.handle] = file.path
         return Status(0, jsonpickle.encode(chunk))
 
     def commit_chunk(self, file_path: str, chunk_handle: str):
@@ -178,21 +183,24 @@ class MasterServer:
         file.status = FileStatus.DELETING
         for k, v in file.chunks.items():
             v.status = ChunkStatus.TEMPORARY
-            self.meta.chunk_to_file.pop(v.handle, None)
+            with self.chunk_to_file_lock:
+                self.meta.chunk_to_file.pop(v.handle, None)
         loc_list = chunks_to_locs(list(file.chunks.values()))
         for k, v in loc_list.items():
             ret_status = self.delete_chunks(k, v)
             self.logger.log.debug(ret_status.message)
-        self.meta.files.pop(file_path, None)
+        with self.files_lock:
+            self.meta.files.pop(file_path, None)
         return Status(0, "File deletion successful")
 
     def list_files(self, temporary: int):
         ret = []
-        for file in self.meta.files.values():
-            if file.status == FileStatus.COMMITTED:
-                ret.append(file.display())
-            elif file.status == FileStatus.WRITING and temporary:
-                ret.append(file.display())
+        with self.files_lock:
+            for file in self.meta.files.values():
+                if file.status == FileStatus.COMMITTED:
+                    ret.append(file.display())
+                elif file.status == FileStatus.WRITING and temporary:
+                    ret.append(file.display())
         return stream_list(ret)
 
     def get_chunk_details(self, file_path: str, chunk_index: int):
@@ -209,15 +217,17 @@ class MasterServer:
         for request in request_iterator:
             chunk_handle = request.str
             send_request = chunk_handle + ":" + str(ChunkStatus.DELETED.value)
-            if chunk_handle not in self.meta.chunk_to_file.keys():
-                # instruct to delete
-                yield hybrid_dfs_pb2.String(str=send_request)
-                continue
+            with self.chunk_to_file_lock:
+                if chunk_handle not in self.meta.chunk_to_file.keys():
+                    # instruct to delete
+                    yield hybrid_dfs_pb2.String(str=send_request)
+                    continue
             file_path = self.meta.chunk_to_file[chunk_handle]
-            if file_path not in self.meta.files.keys():
-                # instruct to delete
-                yield hybrid_dfs_pb2.String(str=send_request)
-                continue
+            with self.files_lock:
+                if file_path not in self.meta.files.keys():
+                    # instruct to delete
+                    yield hybrid_dfs_pb2.String(str=send_request)
+                    continue
             file = self.meta.files[file_path]
             chunk = file.chunks[chunk_handle]
             if loc not in chunk.locs:
@@ -227,16 +237,30 @@ class MasterServer:
             yield hybrid_dfs_pb2.String(str=send_request)
 
     def send_heartbeat(self):
+        self.logger.log.debug("sending out heartbeats")
         for loc in self.all_chunk_servers:
             with grpc.insecure_channel(loc) as channel:
                 chunk_stub = hybrid_dfs_pb2_grpc.ChunkToMasterStub(channel)
                 try:
-                    ret_status = chunk_stub.heartbeat(hybrid_dfs_pb2.String(str=""), timeout=1)
+                    ret_status = chunk_stub.heartbeat(hybrid_dfs_pb2.String(str=""), timeout=cfg.HEARTBEAT_TIMEOUT)
                     if loc not in self.available_chunk_servers:
                         self.available_chunk_servers.append(loc)
                 except grpc.RpcError as e:
                     if loc in self.available_chunk_servers:
                         self.available_chunk_servers.remove(loc)
+
+    def file_cleanup(self):
+        to_delete = []
+        self.logger.log.debug("checking file cleanup")
+        with self.files_lock:
+            for file in self.meta.files.values():
+                time_elapsed = (time.time() - file.creation_time)
+                if file.status != FileStatus.COMMITTED and time_elapsed > cfg.FILE_CLEANUP_THRESHOLD:
+                    to_delete.append(file.path)
+        if to_delete:
+            self.logger.log.debug("initiating file cleanup")
+        for file_path in to_delete:
+            self.delete_file(file_path, 0)
 
 
 class MasterToClientServicer(hybrid_dfs_pb2_grpc.MasterToClientServicer):
@@ -302,10 +326,16 @@ def serve():
     server.add_insecure_port(cfg.MASTER_LOC)
     server.start()
     # server.wait_for_termination()
+    heartbeats_done = 0
     try:
         while True:
             time.sleep(cfg.HEARTBEAT_INTERVAL)
             master_server.send_heartbeat()
+            heartbeats_done += 1
+            if heartbeats_done == cfg.FILE_CLEANUP_INTERVAL:
+                master_server.file_cleanup()
+                heartbeats_done = 0
+
     except KeyboardInterrupt as e:
         pass
 
