@@ -53,10 +53,10 @@ class File:
         self.status = FileStatus.WRITING
 
     def __repr__(self):
-        res = f"file_path: {self.path}"
+        res = f"[file_path: {self.path}"
         res += f", creation_time: {self.creation_time}"
         res += f", chunks: {self.chunks}"
-        res += f", status: {self.status}"
+        res += f", status: {self.status}]"
         return res
 
     def display(self):
@@ -131,22 +131,22 @@ class Logger:
             print("Error: Failed to open log file")
 
     def add_file(self, file: File):
-        self.log.info(f"add_file^{file.path}^{str(file.creation_time)}")
+        self.log.info(f"add_file {file.path} {str(file.creation_time)}")
 
     def add_chunk(self, file_path: str, chunk_handle: str):
-        self.log.info(f"add_chunk^{file_path}^{chunk_handle}")
+        self.log.info(f"add_chunk {file_path} {chunk_handle}")
 
     def change_chunk_locs(self, file_path: str, chunk_handle: str, new_locs):
-        self.log.info(f"change_chunk_locs^{file_path}^{chunk_handle}^{jsonpickle.encode(new_locs)}")
+        self.log.info(f"change_chunk_locs {file_path} {chunk_handle} {jsonpickle.encode(new_locs)}")
 
     def commit_chunk(self, file_path: str, chunk_handle: str):
-        self.log.info(f"commit_chunk^{file_path}^{chunk_handle}")
+        self.log.info(f"commit_chunk {file_path} {chunk_handle}")
 
     def commit_file(self, file_path: str):
-        self.log.info(f"commit_file^{file_path}")
+        self.log.info(f"commit_file {file_path}")
 
     def delete_file(self, file_path: str):
-        self.log.info(f"delete_file^{file_path}")
+        self.log.info(f"delete_file {file_path}")
 
 
 def stream_list(arr):

@@ -39,7 +39,7 @@ class MetaData:
                         if len(line) == 0:
                             break
                         print(line)
-                        line = line.split('^')
+                        line = line.split()
                         op = line.pop(0)
                         if op == 'add_file':
                             file_path, create_time = line
@@ -50,7 +50,9 @@ class MetaData:
                             file.chunks[chunk_handle] = Chunk(chunk_handle, [])
                             self.chunk_to_file[chunk_handle] = file.path
                         elif op == 'change_chunk_locs':
-                            file_path, chunk_handle, new_locs = line
+                            file_path = line.pop(0)
+                            chunk_handle = line.pop(0)
+                            new_locs = ' '.join(line)
                             print(new_locs)
                             new_locs = jsonpickle.decode(new_locs)
                             file = self.files[file_path]
