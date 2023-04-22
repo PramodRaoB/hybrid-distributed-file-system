@@ -124,6 +124,8 @@ class MasterServer:
             return Status(-1, "Requested chunk does not exist")
         chunk = file.chunks[chunk_handle]
         new_locs = self.__get_new_locs()
+        # if len(new_locs) != cfg.REPLICATION_FACTOR:
+        #     return Status(0, "Too few chunkservers. Could not replicate chunk")
         self.logger.change_chunk_locs(file_path, chunk_handle, new_locs)
         chunk.locs = new_locs
         self.meta.chunk_to_file[chunk.handle] = file.path

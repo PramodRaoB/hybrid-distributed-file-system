@@ -1,5 +1,7 @@
 import os.path
 import sys
+import threading
+import time
 from concurrent import futures
 from pathlib import Path
 
@@ -37,6 +39,7 @@ class ChunkServer:
         self.loc = loc
         self.root_dir = root_dir
         self.is_visible = {}
+        self.visible_lock = threading.Lock()
         try:
             Path(self.root_dir).mkdir(parents=True, exist_ok=True)
         except FileExistsError as e:
@@ -70,9 +73,10 @@ class ChunkServer:
                     if status == ChunkStatus.DELETED:
                         to_delete.append(chunk_handle)
                     else:
-                        self.is_visible[chunk_handle] = False
-                        if status == ChunkStatus.FINISHED:
-                            self.is_visible[chunk_handle] = True
+                        with self.visible_lock:
+                            self.is_visible[chunk_handle] = False
+                            if status == ChunkStatus.FINISHED:
+                                self.is_visible[chunk_handle] = True
             except grpc.RpcError as e:
                 print(e)
                 print("Cannot wake up when master is dead")
@@ -80,8 +84,9 @@ class ChunkServer:
         self.delete_chunks(stream_list(to_delete))
 
     def read_chunk(self, chunk_handle, offset: int, num_bytes: int):
-        if chunk_handle not in self.is_visible.keys():
-            raise EnvironmentError("Chunk not found")
+        with self.visible_lock:
+            if chunk_handle not in self.is_visible.keys():
+                raise EnvironmentError("Chunk not found")
         if not self.is_visible[chunk_handle]:
             raise EnvironmentError("Chunk currently being modified")
         data_iterator = stream_chunk(os.path.join(self.root_dir, chunk_handle), offset, num_bytes)
@@ -92,7 +97,8 @@ class ChunkServer:
         yield hybrid_dfs_pb2.String(str=jsonpickle.encode(loc_list))
         try:
             with open(os.path.join(self.root_dir, chunk_handle), "w") as f:
-                self.is_visible[chunk_handle] = False
+                with self.visible_lock:
+                    self.is_visible[chunk_handle] = False
                 for data in data_iterator:
                     f.write(data.str)
                     yield data
@@ -103,7 +109,8 @@ class ChunkServer:
     def write_chunk(self, chunk_handle: str, data_iterator):
         try:
             with open(os.path.join(self.root_dir, chunk_handle), "w") as f:
-                self.is_visible[chunk_handle] = False
+                with self.visible_lock:
+                    self.is_visible[chunk_handle] = False
                 for data in data_iterator:
                     f.write(data.str)
             return Status(0, "Chunk created")
@@ -122,11 +129,12 @@ class ChunkServer:
                 return destination_stub.create_chunk(self.write_and_yield_chunk(chunk_handle, loc_list, data_iterator))
 
     def commit_chunk(self, chunk_handle: str):
-        if chunk_handle in self.is_visible.keys():
-            self.is_visible[chunk_handle] = True
-        else:
-            # TODO: Cant happen?
-            pass
+        with self.visible_lock:
+            if chunk_handle in self.is_visible.keys():
+                self.is_visible[chunk_handle] = True
+            else:
+                # TODO: Cant happen?
+                pass
         return Status(0, "Committed")
 
     def delete_chunks(self, request_iterator):
@@ -134,11 +142,32 @@ class ChunkServer:
             try:
                 chunk_handle = request.str
                 os.remove(os.path.join(self.root_dir, chunk_handle))
-                if chunk_handle in self.is_visible.keys():
+                with self.visible_lock:
                     self.is_visible.pop(chunk_handle, None)
             except EnvironmentError as e:
                 print(e)
         return Status(0, "Chunk(s) deleted")
+
+    def chunk_cleanup(self):
+        deleted_chunks = []
+        cur_time = time.time()
+        try:
+            for chunk_handle in os.listdir(self.root_dir):
+                try:
+                    chunk_path = os.path.join(self.root_dir, chunk_handle)
+                    if self.is_visible[chunk_handle] or cur_time - os.path.getctime(chunk_path) > cfg.CHUNK_CLEANUP_THRESHOLD:
+                        continue
+                    os.remove(chunk_path)
+                    deleted_chunks.append(chunk_handle)
+                except EnvironmentError as e:
+                    print(e)
+                    print(f"Chunk clean up failed for chunk {chunk_handle}")
+        except EnvironmentError as e:
+            print(e)
+            print("Could not read chunks")
+        with self.visible_lock:
+            for chunk_handle in deleted_chunks:
+                self.is_visible.pop(chunk_handle, None)
 
 
 class ChunkToClientServicer(hybrid_dfs_pb2_grpc.ChunkToClientServicer):
@@ -214,8 +243,14 @@ def serve():
     hybrid_dfs_pb2_grpc.add_ChunkToMasterServicer_to_server(ChunkToMasterServicer(chunk_server), server)
     server.add_insecure_port(cfg.CHUNK_LOCS[server_index])
     server.start()
-    server.wait_for_termination()
-
+    # server.wait_for_termination()
+    try:
+        while True:
+            time.sleep(cfg.CHUNK_CLEANUP_PERIOD)
+            print("cleaning chunks")
+            chunk_server.chunk_cleanup()
+    except KeyboardInterrupt as e:
+        pass
 
 if __name__ == '__main__':
     serve()
