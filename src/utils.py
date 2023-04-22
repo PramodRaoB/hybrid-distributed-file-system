@@ -1,5 +1,10 @@
+import logging
 from collections import OrderedDict
 from enum import Enum
+from sys import stdout
+
+import jsonpickle
+
 import hybrid_dfs_pb2_grpc
 import hybrid_dfs_pb2
 
@@ -43,11 +48,46 @@ class File:
         self.status = FileStatus.WRITING
 
     def __repr__(self):
+        res = f"file_path: {self.path}"
+        res += f", creation_time: {self.creation_time}"
+        res += f", chunks: {self.chunks}"
+        res += f", status: {self.status}"
+        return res
+
+    def display(self):
         res = '{:>12} {:>12} {:>12} {:>12}'.format(self.status.name, len(self.chunks), self.creation_time, self.path)
         return res
 
     def __str__(self):
         return self.__repr__()
+
+
+class Logger:
+    def __init__(self, log_file):
+        try:
+            self.log = logging.getLogger("DFS_master")
+            logging.basicConfig(filename=log_file, level=logging.INFO, format='%(message)s')
+            print(f"Master server started. Logging to {log_file}")
+        except EnvironmentError as e:
+            print("Error: Failed to open log file")
+
+    def add_file(self, file: File):
+        self.log.info(f"add_file^{file.path}^{str(file.creation_time)}")
+
+    def add_chunk(self, file_path: str, chunk_handle: str):
+        self.log.info(f"add_chunk^{file_path}^{chunk_handle}")
+
+    def change_chunk_locs(self, file_path: str, chunk_handle: str, new_locs):
+        self.log.info(f"change_chunk_locs^{file_path}^{chunk_handle}^{jsonpickle.encode(new_locs)}")
+
+    def commit_chunk(self, file_path: str, chunk_handle: str):
+        self.log.info(f"commit_chunk^{file_path}^{chunk_handle}")
+
+    def commit_file(self, file_path: str):
+        self.log.info(f"commit_file^{file_path}")
+
+    def delete_file(self, file_path: str):
+        self.log.info(f"delete_file^{file_path}")
 
 
 def stream_list(arr):

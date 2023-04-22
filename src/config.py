@@ -12,3 +12,4 @@ CHUNK_LOCS = [CHUNK_IPS[i] + ":" + CHUNK_PORTS[i] for i in range(NUM_CHUNK_SERVE
 MASTER_PORT = "50051"
 MASTER_IP = "localhost"
 MASTER_LOC = MASTER_IP + ":" + MASTER_PORT
+MASTER_LOG = '/tmp/master.log'
