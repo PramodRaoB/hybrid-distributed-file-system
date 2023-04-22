@@ -163,16 +163,16 @@ class Client:
         print(ret_status.message)
 
     def list_files(self, hidden: int):
-        ret_status = self.master_stub.list_files(hybrid_dfs_pb2.String(str=str(hidden)))
-        files = jsonpickle.decode(ret_status.message)
-        print(files)
+        data_iterator = self.master_stub.list_files(hybrid_dfs_pb2.String(str=str(hidden)))
+        for file in data_iterator:
+            print(file.str)
 
 
 def run():
     with Client() as client:
-        # client.create_file("/home/jade/use.txt", "use")
-        # client.list_files(1)
-        client.read_file("use", 58 * cfg.CHUNK_SIZE, 20)
+        client.create_file("/home/jade/use.txt", "use_big")
+        client.list_files(1)
+        # client.read_file("use", 0, 20)
         # client.delete_file("use")
         # client.read_file("test.py", 3, 20)
 

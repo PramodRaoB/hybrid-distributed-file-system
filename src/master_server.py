@@ -125,11 +125,14 @@ class MasterServer:
         self.meta.files.pop(file_path, None)
         return Status(0, "File deletion successful")
 
-    def list_files(self, hidden: int):
+    def list_files(self, temporary: int):
         ret = []
-        for k, v in self.meta.files.items():
-            ret.append(v)
-        return Status(0, jsonpickle.encode(ret))
+        for file in self.meta.files.values():
+            if file.status == FileStatus.COMMITTED:
+                ret.append(file)
+            elif file.status == FileStatus.WRITING and temporary:
+                ret.append(file)
+        return stream_list(ret)
 
     def get_chunk_details(self, file_path: str, chunk_index: int):
         if not self.meta.does_exist(file_path):
@@ -159,9 +162,8 @@ class MasterToClientServicer(hybrid_dfs_pb2_grpc.MasterToClientServicer):
         return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
 
     def list_files(self, request, context):
-        hidden = int(request.str)
-        ret_status = self.master.list_files(hidden)
-        return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
+        temporary = int(request.str)
+        return self.master.list_files(temporary)
 
     def get_chunk_locs(self, request, context):
         file_path, chunk_handle = request.str.split(':')

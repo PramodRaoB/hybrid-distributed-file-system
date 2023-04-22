@@ -43,11 +43,7 @@ class File:
         self.status = FileStatus.WRITING
 
     def __repr__(self):
-        res = "{File path: " + self.path
-        res += ", Creation time: " + str(self.creation_time)
-        res += ", Chunks: " + str(self.chunks)
-        res += ", Status: " + str(self.status.name)
-        res += "}\n"
+        res = '{:>12} {:>12} {:>12} {:>12}'.format(self.status.name, len(self.chunks), self.creation_time, self.path)
         return res
 
     def __str__(self):
