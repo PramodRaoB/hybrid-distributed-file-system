@@ -12,7 +12,7 @@ import jsonpickle
 import grpc
 import hybrid_dfs_pb2
 import hybrid_dfs_pb2_grpc
-from utils import Status, Chunk, File, stream_list
+from utils import Status, Chunk, File, stream_list, ChunkStatus, FileStatus
 import config as cfg
 
 
@@ -67,17 +67,26 @@ class MasterServer:
         if not chunk_handle:
             chunk_handle = get_new_handle()
             file.chunks[chunk_handle] = Chunk(chunk_handle, [])
+        if chunk_handle not in file.chunks.keys():
+            return Status(-1, "Requested chunk does not exist")
         chunk = file.chunks[chunk_handle]
         chunk.locs = self.__get_new_locs()
         return Status(0, jsonpickle.encode(chunk))
 
-    def commit_chunk(self, chunk):
+    def commit_chunk(self, file_handle: str, chunk_handle: str):
+        if not self.meta.does_exist(file_handle):
+            return Status(-1, "File not found")
+        file = self.meta.files[file_handle]
+        if chunk_handle not in file.chunks.keys():
+            return Status(-1, "Chunk not found")
+        chunk = file.chunks[chunk_handle]
         for loc in chunk.locs:
             with grpc.insecure_channel(loc) as channel:
                 chunk_stub = hybrid_dfs_pb2_grpc.ChunkToMasterStub(channel)
                 ret_status = chunk_stub.commit_chunk(hybrid_dfs_pb2.String(str=chunk.handle))
             if ret_status.code != 0:
                 return ret_status
+            chunk.status = ChunkStatus.FINISHED
         return Status(0, "Committed chunks")
 
     def file_create_status(self, file_path: str, status: int):
@@ -110,6 +119,8 @@ class MasterServer:
         if not self.meta.does_exist(file_path):
             return Status(-1, "File not found")
         file = self.meta.files[file_path]
+        if file.status == FileStatus.DELETING:
+            return Status(-1, "File being deleted. Cannot read.")
         if chunk_index >= len(file.chunks):
             return Status(-1, "EOF reached")
         return Status(0, jsonpickle.encode(list(file.chunks.items())[chunk_index][1]))
@@ -142,8 +153,8 @@ class MasterToClientServicer(hybrid_dfs_pb2_grpc.MasterToClientServicer):
         return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
 
     def commit_chunk(self, request, context):
-        chunk = jsonpickle.decode(request.str)
-        ret_status = self.master.commit_chunk(chunk)
+        file_handle, chunk_handle = request.str.split(':')
+        ret_status = self.master.commit_chunk(file_handle, chunk_handle)
         return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
 
     def file_create_status(self, request, context):

@@ -10,11 +10,16 @@ class Status:
         self.message = message
 
 
+class ChunkStatus(Enum):
+    TEMPORARY = 0
+    FINISHED = 1
+
+
 class Chunk:
     def __init__(self, chunk_handle: str, chunk_locs):
         self.handle = chunk_handle
         self.locs = chunk_locs
-        self.status = Enum('Status', ['TEMPORARY', 'FINISHED'])
+        self.status = ChunkStatus.TEMPORARY
 
     def __repr__(self):
         res = self.handle + ": " + str(self.locs)
@@ -24,18 +29,24 @@ class Chunk:
         return self.__repr__()
 
 
+class FileStatus(Enum):
+    DELETING = 0
+    WRITING = 1
+    COMMITTED = 2
+
+
 class File:
     def __init__(self, file_path: str, creation_time):
         self.path = file_path
         self.creation_time = creation_time
         self.chunks = OrderedDict()
-        self.is_committed = False
+        self.status = FileStatus.WRITING
 
     def __repr__(self):
         res = "{File path: " + self.path
         res += ", Creation time: " + str(self.creation_time)
         res += ", Chunks: " + str(self.chunks)
-        res += ", Is committed: " + str(self.is_committed)
+        res += ", Status: " + str(self.status.name)
         res += "}\n"
         return res
 

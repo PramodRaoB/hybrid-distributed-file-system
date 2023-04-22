@@ -15,11 +15,11 @@ import config as cfg
 
 
 def stream_chunk(file_path: str, chunk_index: int, chunk_handle: str, loc_list):
+    yield hybrid_dfs_pb2.String(str=chunk_handle)
+    yield hybrid_dfs_pb2.String(str=jsonpickle.encode(loc_list))
     try:
         with open(file_path, "r", buffering=cfg.PACKET_SIZE) as f:
             f.seek(chunk_index * cfg.CHUNK_SIZE)
-            yield hybrid_dfs_pb2.String(str=chunk_handle)
-            yield hybrid_dfs_pb2.String(str=jsonpickle.encode(loc_list))
             for _ in range(cfg.CHUNK_SIZE // cfg.PACKET_SIZE):
                 packet = f.read(cfg.PACKET_SIZE)
                 if len(packet) == 0:
@@ -27,6 +27,7 @@ def stream_chunk(file_path: str, chunk_index: int, chunk_handle: str, loc_list):
                 yield hybrid_dfs_pb2.String(str=packet)
     except EnvironmentError as e:
         print(e)
+        raise Exception(e)
 
 
 class Client:
@@ -133,8 +134,11 @@ class Client:
                 try_count += 1
                 print(f"Retrying: chunk {seq_no}, attempt {try_count}")
             else:
-                request = jsonpickle.encode(chunk)
+                request = dfs_file_path + ":" + curr_chunk_handle
                 ret_status = self.master_stub.commit_chunk(hybrid_dfs_pb2.String(str=request))
+                if ret_status.code != 0:
+                    success = False
+                    break
                 try_count = 0
                 seq_no += 1
                 curr_chunk_handle = ""
