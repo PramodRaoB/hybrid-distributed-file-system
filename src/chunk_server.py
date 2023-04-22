@@ -10,7 +10,7 @@ import jsonpickle
 
 import hybrid_dfs_pb2
 import hybrid_dfs_pb2_grpc
-from utils import Status, Chunk
+from utils import Status, Chunk, stream_list, ChunkStatus
 import config as cfg
 
 
@@ -40,6 +40,42 @@ class ChunkServer:
         except FileExistsError as e:
             print(e)
             exit(1)
+        self.wake_up()
+
+    def wake_up(self):
+        curr_dir = os.fsencode(self.root_dir)
+        chunks = []
+        try:
+            for chunk in os.listdir(curr_dir):
+                chunk_handle = os.fsdecode(chunk)
+                chunks.append(chunk_handle)
+        except OSError as e:
+            print(e)
+            exit(1)
+        to_delete = []
+        with grpc.insecure_channel(cfg.MASTER_LOC) as channel:
+            master_stub = hybrid_dfs_pb2_grpc.MasterToChunkStub(channel)
+            try:
+                resp = master_stub.query_chunks(stream_list(chunks), timeout=cfg.CLIENT_RPC_TIMEOUT)
+            except grpc.RpcError as e:
+                print(e)
+                print("Cannot wake up when master is dead")
+                exit(1)
+            try:
+                for request in resp:
+                    chunk_handle, status = request.str.split(':')
+                    status = ChunkStatus(int(status))
+                    if status == ChunkStatus.DELETED:
+                        to_delete.append(chunk_handle)
+                    else:
+                        self.is_visible[chunk_handle] = False
+                        if status == ChunkStatus.FINISHED:
+                            self.is_visible[chunk_handle] = True
+            except grpc.RpcError as e:
+                print(e)
+                print("Cannot wake up when master is dead")
+                exit(1)
+        self.delete_chunks(stream_list(to_delete))
 
     def read_chunk(self, chunk_handle, offset: int, num_bytes: int):
         if chunk_handle not in self.is_visible.keys():

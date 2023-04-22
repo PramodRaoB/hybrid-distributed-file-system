@@ -28,6 +28,10 @@ service ChunkToMaster {
   rpc delete_chunks (stream String) returns (Status) {}
 }
 
+service MasterToChunk {
+  rpc query_chunks (stream String) returns (stream String) {}
+}
+
 message String {
   string str = 1;
 }

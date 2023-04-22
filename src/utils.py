@@ -1,4 +1,6 @@
+import json
 import logging
+import logging.config
 from collections import OrderedDict
 from enum import Enum
 from sys import stdout
@@ -7,6 +9,8 @@ import jsonpickle
 
 import hybrid_dfs_pb2_grpc
 import hybrid_dfs_pb2
+
+import config as cfg
 
 
 class Status:
@@ -18,6 +22,7 @@ class Status:
 class ChunkStatus(Enum):
     TEMPORARY = 0
     FINISHED = 1
+    DELETED = 2
 
 
 class Chunk:
@@ -62,11 +67,65 @@ class File:
         return self.__repr__()
 
 
+log_cfg = '''
+{{
+    "version": 1,
+    "disable_existing_loggers": false,
+    "formatters": {{
+        "simple": {{
+            "format": "%(message)s"
+        }},
+        "debug": {{
+            "format": "%(asctime)s %(levelname)s:%(message)s",
+            "datefmt": "%Y-%m-%d %H:%M"
+        }}
+    }},
+    "filters": {{
+        "info_and_below": {{
+            "()" : "utils.filter_maker",
+            "level": "INFO"
+        }}
+    }},
+    "handlers": {{
+        "stdout": {{
+            "class": "logging.StreamHandler",
+            "formatter": "debug",
+            "stream": "ext://sys.stdout"
+        }},
+        "file": {{
+            "class": "logging.FileHandler",
+            "formatter": "simple",
+            "filename": "{0}",
+            "mode": "a",
+            "level": "INFO",
+            "filters": ["info_and_below"]
+        }}
+    }},
+    "root": {{
+        "level": "DEBUG",
+        "handlers": [
+            "stdout",
+            "file"
+        ]
+    }}
+}}
+'''.format(cfg.MASTER_LOG)
+
+
+def filter_maker(level):
+    level = getattr(logging, level)
+
+    def filter(record):
+        return record.levelno <= level
+
+    return filter
+
+
 class Logger:
     def __init__(self, log_file):
         try:
+            logging.config.dictConfig(json.loads(log_cfg))
             self.log = logging.getLogger("DFS_master")
-            logging.basicConfig(filename=log_file, level=logging.INFO, format='%(message)s')
             print(f"Master server started. Logging to {log_file}")
         except EnvironmentError as e:
             print("Error: Failed to open log file")
