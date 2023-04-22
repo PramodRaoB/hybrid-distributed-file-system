@@ -61,15 +61,16 @@ class Client:
         start = offset // cfg.CHUNK_SIZE
         end = -1
         if num_bytes != -1:
-            end = (start + num_bytes - 1) // cfg.CHUNK_SIZE
+            end = (offset + num_bytes - 1) // cfg.CHUNK_SIZE
         index = start
         while end == -1 or index <= end:
             request = file_path + ":" + str(index)
             ret_status = self.master_stub.get_chunk_details(hybrid_dfs_pb2.String(str=request))
             if ret_status.code != 0:
-                if end != -1:
+                if end != -1 or index == start:
                     print("Error: Failed to fetch chunk")
                     print(ret_status.message)
+                print("")
                 return
             chunk = jsonpickle.decode(ret_status.message)
             chunk_start = 0
@@ -87,12 +88,13 @@ class Client:
                         print(data.str, end='')
                     success = True
                     break
-                except EnvironmentError as e:
+                except (OSError, grpc.RpcError) as e:
                     pass
             if not success:
                 print("Error: Failed to fetch chunk. Aborting")
                 return
             index += 1
+        print("")
 
     def create_file(self, local_file_path: str, dfs_file_path: str):
         try:
@@ -124,9 +126,14 @@ class Client:
             chunk = jsonpickle.decode(ret_status.message)
             curr_chunk_handle = chunk.handle
             request_iterator = stream_chunk(local_file_path, seq_no, chunk.handle, chunk.locs)
-            ret_status = self.chunk_stubs[chunk.locs[0]].create_chunk(request_iterator, timeout=cfg.CLIENT_RPC_TIMEOUT)
-            print(ret_status.message)
-            if ret_status.code != 0:
+            ret_status = None
+            try:
+                ret_status = self.chunk_stubs[chunk.locs[0]].create_chunk(request_iterator,
+                                                                          timeout=cfg.CLIENT_RPC_TIMEOUT)
+                print(ret_status.message)
+            except grpc.RpcError as e:
+                print(e)
+            if not ret_status or ret_status.code != 0:
                 if try_count == cfg.CLIENT_RETRY_LIMIT:
                     print("Error: Could not create file. Aborting.")
                     success = False
@@ -145,11 +152,7 @@ class Client:
         if success:
             request = dfs_file_path + ":0"
             ret_status = self.master_stub.file_create_status(hybrid_dfs_pb2.String(str=request))
-            if ret_status.code != 0:
-                print("Could not create file: ", end='')
-                print(ret_status.message)
-            else:
-                print(ret_status.message)
+            print(ret_status.message)
         else:
             request = dfs_file_path + ":1"
             self.master_stub.file_create_status(hybrid_dfs_pb2.String(str=request))
@@ -167,10 +170,11 @@ class Client:
 
 def run():
     with Client() as client:
-        client.create_file("/home/jade/temp.txt", "temp.txt")
+        # client.create_file("/home/jade/use.txt", "use")
         # client.list_files(1)
-        client.read_file("temp.txt", 0, -1)
-        # client.delete_file("client.py")
+        client.read_file("use", 58 * cfg.CHUNK_SIZE, 20)
+        # client.delete_file("use")
+        # client.read_file("test.py", 3, 20)
 
 
 if __name__ == '__main__':

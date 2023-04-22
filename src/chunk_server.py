@@ -25,9 +25,9 @@ def stream_chunk(file_path: str, offset: int, num_bytes: int):
                 if len(packet) == 0:
                     break
                 yield hybrid_dfs_pb2.String(str=packet)
-    except EnvironmentError as e:
-        print(e)
-        raise Exception(e)
+    except OSError as e:
+        # print(e)
+        raise OSError(e)
 
 
 class ChunkServer:
@@ -42,6 +42,10 @@ class ChunkServer:
             exit(1)
 
     def read_chunk(self, chunk_handle, offset: int, num_bytes: int):
+        if chunk_handle not in self.is_visible.keys():
+            raise EnvironmentError("Chunk not found")
+        if not self.is_visible[chunk_handle]:
+            raise EnvironmentError("Chunk currently being modified")
         data_iterator = stream_chunk(os.path.join(self.root_dir, chunk_handle), offset, num_bytes)
         return data_iterator
 
@@ -54,7 +58,7 @@ class ChunkServer:
                 for data in data_iterator:
                     f.write(data.str)
                     yield data
-        except EnvironmentError as e:
+        except (EnvironmentError, grpc.RpcError) as e:
             print(e)
             raise Exception(e)
 
@@ -65,12 +69,13 @@ class ChunkServer:
                 for data in data_iterator:
                     f.write(data.str)
             return Status(0, "Chunk created")
-        except EnvironmentError as e:
+        except (EnvironmentError, grpc.RpcError) as e:
             print(e)
             return Status(-1, "Chunk creation pipeline failed")
 
     def create_chunk(self, chunk_handle: str, loc_list, data_iterator):
         loc_list.pop(0)
+        print(f"request to create chunk {chunk_handle}")
         if not loc_list:
             return self.write_chunk(chunk_handle, data_iterator)
         else:
@@ -85,6 +90,17 @@ class ChunkServer:
             # TODO: Cant happen?
             pass
         return Status(0, "Committed")
+
+    def delete_chunks(self, request_iterator):
+        for request in request_iterator:
+            try:
+                chunk_handle = request.str
+                os.remove(os.path.join(self.root_dir, chunk_handle))
+                if chunk_handle in self.is_visible.keys():
+                    self.is_visible.pop(chunk_handle, None)
+            except EnvironmentError as e:
+                print(e)
+        return Status(0, "Chunk(s) deleted")
 
 
 class ChunkToClientServicer(hybrid_dfs_pb2_grpc.ChunkToClientServicer):
@@ -135,6 +151,10 @@ class ChunkToMasterServicer(hybrid_dfs_pb2_grpc.ChunkToMasterServicer):
 
     def commit_chunk(self, request, context):
         ret_status = self.server.commit_chunk(request.str)
+        return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
+
+    def delete_chunks(self, request_iterator, context):
+        ret_status = self.server.delete_chunks(request_iterator)
         return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
 
 

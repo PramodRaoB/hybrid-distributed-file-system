@@ -80,34 +80,50 @@ class MasterServer:
         if chunk_handle not in file.chunks.keys():
             return Status(-1, "Chunk not found")
         chunk = file.chunks[chunk_handle]
+        chunk.status = ChunkStatus.FINISHED
         for loc in chunk.locs:
             with grpc.insecure_channel(loc) as channel:
                 chunk_stub = hybrid_dfs_pb2_grpc.ChunkToMasterStub(channel)
-                ret_status = chunk_stub.commit_chunk(hybrid_dfs_pb2.String(str=chunk.handle))
-            if ret_status.code != 0:
-                return ret_status
-            chunk.status = ChunkStatus.FINISHED
+                try:
+                    ret_status = chunk_stub.commit_chunk(hybrid_dfs_pb2.String(str=chunk.handle))
+                    print(ret_status.message)
+                except grpc.RpcError as e:
+                    print(e)
         return Status(0, "Committed chunks")
 
     def file_create_status(self, file_path: str, status: int):
         if status:
-            # TODO: delete chunks if client says failure
-            self.meta.files.pop(file_path)
-            return Status(0, "File removed")
+            return self.delete_file(file_path, 0)
         else:
             file = self.meta.files[file_path]
-            file.is_committed = True
+            file.status = FileStatus.COMMITTED
             return Status(0, "File committed")
 
-    def delete_file(self, file_path: str):
+    def delete_chunks(self, loc: str, chunk_handles):
+        with grpc.insecure_channel(loc) as channel:
+            chunk_stub = hybrid_dfs_pb2_grpc.ChunkToMasterStub(channel)
+            try:
+                ret_status = chunk_stub.delete_chunks(stream_list(chunk_handles))
+                print(ret_status.message)
+            except grpc.RpcError as e:
+                print(e)
+        return Status(0, "Chunk deletion handled")
+
+    def delete_file(self, file_path: str, check_for_commit: int):
         if not self.meta.does_exist(file_path):
             return Status(-1, "File does not exist")
-        new_file = deepcopy(self.meta.files[file_path])
-        new_file.path = "." + new_file.path
-        new_file.is_deleted = True
-        self.meta.files[new_file.path] = new_file
+        file = self.meta.files[file_path]
+        if check_for_commit and file.status != FileStatus.COMMITTED:
+            return Status(-1, "File currently being deleted or written to")
+        file.status = FileStatus.DELETING
+        for k, v in file.chunks.items():
+            v.status = ChunkStatus.TEMPORARY
+        loc_list = chunks_to_locs(list(file.chunks.values()))
+        for k, v in loc_list.items():
+            ret_status = self.delete_chunks(k, v)
+            print(ret_status.message)
         self.meta.files.pop(file_path, None)
-        return Status(0, "Successfully marked for deletion")
+        return Status(0, "File deletion successful")
 
     def list_files(self, hidden: int):
         ret = []
@@ -139,7 +155,7 @@ class MasterToClientServicer(hybrid_dfs_pb2_grpc.MasterToClientServicer):
 
     def delete_file(self, request, context):
         file_path = request.str
-        ret_status = self.master.delete_file(file_path)
+        ret_status = self.master.delete_file(file_path, 1)
         return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
 
     def list_files(self, request, context):

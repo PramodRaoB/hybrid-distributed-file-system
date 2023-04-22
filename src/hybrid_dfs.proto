@@ -25,6 +25,7 @@ service ChunkToChunk {
 
 service ChunkToMaster {
   rpc commit_chunk (String) returns (Status) {}
+  rpc delete_chunks (stream String) returns (Status) {}
 }
 
 message String {
