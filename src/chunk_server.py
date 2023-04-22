@@ -75,7 +75,7 @@ class ChunkServer:
 
     def create_chunk(self, chunk_handle: str, loc_list, data_iterator):
         loc_list.pop(0)
-        print(f"request to create chunk {chunk_handle}")
+        print(f"Request to create chunk {chunk_handle}")
         if not loc_list:
             return self.write_chunk(chunk_handle, data_iterator)
         else:
