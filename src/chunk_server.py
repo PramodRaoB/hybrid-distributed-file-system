@@ -45,9 +45,9 @@ class ChunkServer:
         except FileExistsError as e:
             print(e)
             exit(1)
-        self.wake_up()
+        self.wake_up(1)
 
-    def wake_up(self):
+    def wake_up(self, init: int):
         curr_dir = os.fsencode(self.root_dir)
         chunks = [self.loc]
         try:
@@ -56,16 +56,18 @@ class ChunkServer:
                 chunks.append(chunk_handle)
         except OSError as e:
             print(e)
-            exit(1)
+            if init:
+                exit(1)
         to_delete = []
         with grpc.insecure_channel(cfg.MASTER_LOC) as channel:
             master_stub = hybrid_dfs_pb2_grpc.MasterToChunkStub(channel)
             try:
-                resp = master_stub.query_chunks(stream_list(chunks), timeout=cfg.CLIENT_RPC_TIMEOUT)
+                resp = master_stub.query_chunks(stream_list(chunks), timeout=cfg.CHUNK_RPC_TIMEOUT)
             except grpc.RpcError as e:
                 print(e)
                 print("Cannot wake up when master is dead")
-                exit(1)
+                if init:
+                    exit(1)
             try:
                 for request in resp:
                     chunk_handle, status = request.str.split(':')
@@ -79,8 +81,9 @@ class ChunkServer:
                                 self.is_visible[chunk_handle] = True
             except grpc.RpcError as e:
                 print(e)
-                print("Cannot wake up when master is dead")
-                exit(1)
+                if init:
+                    print("Cannot wake up when master is dead")
+                    exit(1)
         self.delete_chunks(stream_list(to_delete))
 
     def read_chunk(self, chunk_handle, offset: int, num_bytes: int):
@@ -126,7 +129,14 @@ class ChunkServer:
         else:
             with grpc.insecure_channel(loc_list[0]) as channel:
                 destination_stub = hybrid_dfs_pb2_grpc.ChunkToChunkStub(channel)
-                return destination_stub.create_chunk(self.write_and_yield_chunk(chunk_handle, loc_list, data_iterator))
+                try:
+                    ret_status = destination_stub.create_chunk(
+                        self.write_and_yield_chunk(chunk_handle, loc_list, data_iterator),
+                        timeout=cfg.CHUNK_RPC_TIMEOUT)
+                    return ret_status
+                except grpc.RpcError as e:
+                    print(e)
+                    return Status(-1, "Chunk creation pipeline failed")
 
     def replicate_chunk(self, chunk_loc: str, chunk_handle: str):
         with grpc.insecure_channel(chunk_loc) as channel:
@@ -155,23 +165,22 @@ class ChunkServer:
         return Status(0, "Chunk(s) deleted")
 
     def chunk_cleanup(self):
+        print("check for cleanup")
         deleted_chunks = []
         cur_time = time.time()
-        try:
-            for chunk_handle in os.listdir(self.root_dir):
-                try:
+        with self.visible_lock:
+            try:
+                for chunk_handle in self.is_visible.keys():
                     chunk_path = os.path.join(self.root_dir, chunk_handle)
-                    if self.is_visible[chunk_handle] or cur_time - os.path.getctime(chunk_path) > cfg.CHUNK_CLEANUP_THRESHOLD:
+                    if self.is_visible[chunk_handle] or cur_time - os.path.getctime(
+                            chunk_path) <= cfg.CHUNK_CLEANUP_THRESHOLD:
                         continue
                     os.remove(chunk_path)
                     deleted_chunks.append(chunk_handle)
-                except EnvironmentError as e:
-                    print(e)
-                    print(f"Chunk clean up failed for chunk {chunk_handle}")
-        except EnvironmentError as e:
-            print(e)
-            print("Could not read chunks")
-        with self.visible_lock:
+            except OSError as e:
+                print(e)
+            if deleted_chunks:
+                print("initiating cleanup")
             for chunk_handle in deleted_chunks:
                 self.is_visible.pop(chunk_handle, None)
 
@@ -235,7 +244,7 @@ class ChunkToMasterServicer(hybrid_dfs_pb2_grpc.ChunkToMasterServicer):
         return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
 
     def replicate_chunk(self, request, context):
-        chunk_loc, chunk_handle = request.str.split(":")
+        chunk_loc, chunk_handle = request.str.split(";")
         ret_status = self.server.replicate_chunk(chunk_loc, chunk_handle)
         return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
 
@@ -259,13 +268,19 @@ def serve():
     server.add_insecure_port(cfg.CHUNK_LOCS[server_index])
     server.start()
     # server.wait_for_termination()
+    cleanups_done = 0
     try:
         while True:
             time.sleep(cfg.CHUNK_CLEANUP_INTERVAL)
-            print("cleaning chunks")
             chunk_server.chunk_cleanup()
+            cleanups_done += 1
+            if cleanups_done == cfg.CHUNK_AUTO_QUERY:
+                chunk_server.wake_up(0)
+                cleanups_done = 0
+
     except KeyboardInterrupt as e:
         pass
+
 
 if __name__ == '__main__':
     serve()

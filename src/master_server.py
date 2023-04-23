@@ -107,18 +107,19 @@ class MasterServer:
                              min(cfg.REPLICATION_FACTOR, len(self.available_chunk_servers)))
 
     def create_file(self, file_path: str):
-        if self.meta.does_exist(file_path):
-            return Status(-1, "File already exists")
-        # TODO: Check available space before creating
-        new_file = File(file_path, time.time())
-        self.logger.add_file(new_file)
         with self.files_lock:
+            if self.meta.does_exist(file_path):
+                return Status(-1, "File already exists")
+            # TODO: Check available space before creating
+            new_file = File(file_path, time.time())
+            self.logger.add_file(new_file)
             self.meta.files[file_path] = new_file
-        return Status(0, "File created")
+            return Status(0, "File created")
 
     def get_chunk_locs(self, file_path: str, chunk_handle: str):
-        if not self.meta.does_exist(file_path):
-            return Status(-1, "Requested file does not exist")
+        with self.files_lock:
+            if not self.meta.does_exist(file_path):
+                return Status(-1, "Requested file does not exist")
         file = self.meta.files[file_path]
         if not chunk_handle:
             chunk_handle = get_new_handle()
@@ -137,8 +138,9 @@ class MasterServer:
         return Status(0, jsonpickle.encode(chunk))
 
     def commit_chunk(self, file_path: str, chunk_handle: str):
-        if not self.meta.does_exist(file_path):
-            return Status(-1, "File not found")
+        with self.files_lock:
+            if not self.meta.does_exist(file_path):
+                return Status(-1, "File not found")
         file = self.meta.files[file_path]
         if chunk_handle not in file.chunks.keys():
             return Status(-1, "Chunk not found")
@@ -149,7 +151,8 @@ class MasterServer:
             with grpc.insecure_channel(loc) as channel:
                 chunk_stub = hybrid_dfs_pb2_grpc.ChunkToMasterStub(channel)
                 try:
-                    ret_status = chunk_stub.commit_chunk(hybrid_dfs_pb2.String(str=chunk.handle))
+                    ret_status = chunk_stub.commit_chunk(hybrid_dfs_pb2.String(str=chunk.handle),
+                                                         timeout=cfg.MASTER_RPC_TIMEOUT)
                 except grpc.RpcError as e:
                     self.logger.log.error(e)
         return Status(0, "Committed chunks")
@@ -167,20 +170,21 @@ class MasterServer:
         with grpc.insecure_channel(loc) as channel:
             chunk_stub = hybrid_dfs_pb2_grpc.ChunkToMasterStub(channel)
             try:
-                ret_status = chunk_stub.delete_chunks(stream_list(chunk_handles))
+                ret_status = chunk_stub.delete_chunks(stream_list(chunk_handles), timeout=cfg.MASTER_RPC_TIMEOUT)
                 self.logger.log.debug(ret_status.message)
             except grpc.RpcError as e:
                 self.logger.log.error(e)
         return Status(0, "Chunk deletion handled")
 
     def delete_file(self, file_path: str, check_for_commit: int):
-        if not self.meta.does_exist(file_path):
-            return Status(-1, "File does not exist")
-        file = self.meta.files[file_path]
-        if check_for_commit and file.status != FileStatus.COMMITTED:
-            return Status(-1, "File currently being deleted or written to")
-        self.logger.delete_file(file_path)
-        file.status = FileStatus.DELETING
+        with self.files_lock:
+            if not self.meta.does_exist(file_path):
+                return Status(-1, "File does not exist")
+            file = self.meta.files[file_path]
+            if check_for_commit and file.status != FileStatus.COMMITTED:
+                return Status(-1, "File currently being deleted or written to")
+            self.logger.delete_file(file_path)
+            file.status = FileStatus.DELETING
         for k, v in file.chunks.items():
             v.status = ChunkStatus.TEMPORARY
             with self.chunk_to_file_lock:
@@ -204,14 +208,15 @@ class MasterServer:
         return stream_list(ret)
 
     def get_chunk_details(self, file_path: str, chunk_index: int):
-        if not self.meta.does_exist(file_path):
-            return Status(-1, "File not found")
-        file = self.meta.files[file_path]
-        if file.status == FileStatus.DELETING:
-            return Status(-1, "File being deleted. Cannot read.")
-        if chunk_index >= len(file.chunks):
-            return Status(-1, "EOF reached")
-        return Status(0, jsonpickle.encode(list(file.chunks.items())[chunk_index][1]))
+        with self.files_lock:
+            if not self.meta.does_exist(file_path):
+                return Status(-1, "File not found")
+            file = self.meta.files[file_path]
+            if file.status == FileStatus.DELETING:
+                return Status(-1, "File being deleted. Cannot read.")
+            if chunk_index >= len(file.chunks):
+                return Status(-1, "EOF reached")
+            return Status(0, jsonpickle.encode(list(file.chunks.items())[chunk_index][1]))
 
     def query_chunks(self, loc: str, request_iterator):
         for request in request_iterator:
@@ -222,19 +227,19 @@ class MasterServer:
                     # instruct to delete
                     yield hybrid_dfs_pb2.String(str=send_request)
                     continue
-            file_path = self.meta.chunk_to_file[chunk_handle]
-            with self.files_lock:
-                if file_path not in self.meta.files.keys():
-                    # instruct to delete
+                file_path = self.meta.chunk_to_file[chunk_handle]
+                with self.files_lock:
+                    if file_path not in self.meta.files.keys():
+                        # instruct to delete
+                        yield hybrid_dfs_pb2.String(str=send_request)
+                        continue
+                    file = self.meta.files[file_path]
+                    chunk = file.chunks[chunk_handle]
+                    if loc not in chunk.locs:
+                        yield hybrid_dfs_pb2.String(str=send_request)
+                        continue
+                    send_request = chunk_handle + ":" + str(chunk.status.value)
                     yield hybrid_dfs_pb2.String(str=send_request)
-                    continue
-            file = self.meta.files[file_path]
-            chunk = file.chunks[chunk_handle]
-            if loc not in chunk.locs:
-                yield hybrid_dfs_pb2.String(str=send_request)
-                continue
-            send_request = chunk_handle + ":" + str(chunk.status.value)
-            yield hybrid_dfs_pb2.String(str=send_request)
 
     def send_heartbeat(self):
         self.logger.log.debug("sending out heartbeats")
@@ -261,6 +266,74 @@ class MasterServer:
             self.logger.log.debug("initiating file cleanup")
         for file_path in to_delete:
             self.delete_file(file_path, 0)
+
+    def rebalance(self):
+        all_chunks = []
+        self.logger.log.debug("initiating rebalance")
+        with self.chunk_to_file_lock:
+            with self.files_lock:
+                for file in self.meta.files.values():
+                    if file.status == FileStatus.COMMITTED:
+                        all_chunks.extend(list(file.chunks.values()))
+                loc_list = chunks_to_locs(all_chunks)
+                for loc in cfg.CHUNK_LOCS:
+                    if loc not in loc_list.keys():
+                        loc_list[loc] = []
+                for _ in range(cfg.REBALANCE_MAX_CHUNKS_MOVED):
+                    total_cnt = 0
+                    min_cnt = -1
+                    max_cnt = 0
+                    min_loc = ""
+                    max_loc = ""
+                    for loc in self.available_chunk_servers:
+                        chunk_handles = loc_list[loc]
+                        curr_cnt = len(chunk_handles)
+                        total_cnt += curr_cnt
+                        if min_cnt == -1 or curr_cnt < min_cnt:
+                            min_cnt = curr_cnt
+                            min_loc = loc
+                        if curr_cnt > max_cnt:
+                            max_cnt = curr_cnt
+                            max_loc = loc
+                    if not max_loc or not min_loc:
+                        break
+                    if max_cnt > cfg.REBALANCE_CHUNK_THRESHOLD and (
+                            max_cnt - min_cnt) * 100 > total_cnt * cfg.REBALANCE_DIFF_PERCENTAGE:
+                        common = set(set(loc_list[min_loc]) & set(loc_list[max_loc]))
+                        random.shuffle(loc_list[max_loc])
+                        pick = None
+                        for chunk_handle in loc_list[max_loc]:
+                            if chunk_handle in common:
+                                continue
+                            pick = chunk_handle
+                            break
+                        if not pick:
+                            continue
+                        # chunk_handle -> pick, source -> max_loc, dest -> min_loc
+                        self.logger.log.debug(pick + ", " + min_loc + "," + max_loc)
+                        with grpc.insecure_channel(min_loc) as channel:
+                            chunk_stub = hybrid_dfs_pb2_grpc.ChunkToMasterStub(channel)
+                            request = max_loc + ";" + pick
+                            try:
+                                ret_status = chunk_stub.replicate_chunk(hybrid_dfs_pb2.String(str=request))
+                                if ret_status.code == 0:
+                                    file_handle = self.meta.chunk_to_file[pick]
+                                    file = self.meta.files[file_handle]
+                                    chunk = file.chunks[pick]
+                                    ret_status = chunk_stub.commit_chunk(hybrid_dfs_pb2.String(str=pick))
+                                    if ret_status.code == 0:
+                                        chunk.locs.append(min_loc)
+                                        chunk.locs.remove(max_loc)
+                                        self.logger.change_chunk_locs(file.path, chunk.handle, chunk.locs)
+                                        with grpc.insecure_channel(max_loc) as dest_channel:
+                                            dest_chunk_stub = hybrid_dfs_pb2_grpc.ChunkToMasterStub(dest_channel)
+                                            dest_chunk_stub.delete_chunks(stream_list([pick]))
+                            except grpc.RpcError as e:
+                                print(e)
+                                continue
+                    else:
+                        break
+        self.logger.log.debug("finished rebalancing")
 
 
 class MasterToClientServicer(hybrid_dfs_pb2_grpc.MasterToClientServicer):
@@ -327,6 +400,7 @@ def serve():
     server.start()
     # server.wait_for_termination()
     heartbeats_done = 0
+    super_heartbeats_done = 0
     try:
         while True:
             time.sleep(cfg.HEARTBEAT_INTERVAL)
@@ -335,6 +409,10 @@ def serve():
             if heartbeats_done == cfg.FILE_CLEANUP_INTERVAL:
                 master_server.file_cleanup()
                 heartbeats_done = 0
+                super_heartbeats_done += 1
+            if super_heartbeats_done == cfg.REBALANCE_INTERVAL:
+                master_server.rebalance()
+                super_heartbeats_done = 0
 
     except KeyboardInterrupt as e:
         pass

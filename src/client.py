@@ -4,6 +4,7 @@ import ast
 import logging
 import json
 import os.path
+import sys
 import time
 
 import jsonpickle
@@ -66,7 +67,12 @@ class Client:
         index = start
         while end == -1 or index <= end:
             request = file_path + ":" + str(index)
-            ret_status = self.master_stub.get_chunk_details(hybrid_dfs_pb2.String(str=request))
+            try:
+                ret_status = self.master_stub.get_chunk_details(hybrid_dfs_pb2.String(str=request),
+                                                                timeout=cfg.CLIENT_RPC_TIMEOUT)
+            except grpc.RpcError as e:
+                print(e)
+                return
             if ret_status.code != 0:
                 if end != -1 or index == start:
                     print("Error: Failed to fetch file details")
@@ -84,8 +90,9 @@ class Client:
             success = False
             for loc in chunk.locs:
                 chunk_data = ""
-                data_iterator = self.chunk_stubs[loc].read_chunk(hybrid_dfs_pb2.String(str=request))
                 try:
+                    data_iterator = self.chunk_stubs[loc].read_chunk(hybrid_dfs_pb2.String(str=request),
+                                                                     timeout=cfg.CLIENT_RPC_TIMEOUT)
                     for data in data_iterator:
                         chunk_data += data.str
                     print(chunk_data, end='')
@@ -121,7 +128,13 @@ class Client:
         curr_chunk_handle = ""
         while seq_no < num_chunks:
             request = dfs_file_path + ":" + curr_chunk_handle
-            ret_status = self.master_stub.get_chunk_locs(hybrid_dfs_pb2.String(str=request))
+            try:
+                ret_status = self.master_stub.get_chunk_locs(hybrid_dfs_pb2.String(str=request),
+                                                             timeout=cfg.CLIENT_RPC_TIMEOUT)
+            except grpc.RpcError as e:
+                print(e)
+                success = False
+                break
             if ret_status.code != 0:
                 print(ret_status.message)
                 success = False
@@ -146,7 +159,13 @@ class Client:
                 time.sleep(cfg.CLIENT_RETRY_INTERVAL)
             else:
                 request = dfs_file_path + ":" + curr_chunk_handle
-                ret_status = self.master_stub.commit_chunk(hybrid_dfs_pb2.String(str=request))
+                try:
+                    ret_status = self.master_stub.commit_chunk(hybrid_dfs_pb2.String(str=request),
+                                                               timeout=cfg.CLIENT_RPC_TIMEOUT)
+                except grpc.RpcError as e:
+                    print(e)
+                    success = False
+                    break
                 if ret_status.code != 0:
                     success = False
                     break
@@ -155,31 +174,59 @@ class Client:
                 curr_chunk_handle = ""
         if success:
             request = dfs_file_path + ":0"
-            ret_status = self.master_stub.file_create_status(hybrid_dfs_pb2.String(str=request))
+            try:
+                ret_status = self.master_stub.file_create_status(hybrid_dfs_pb2.String(str=request),
+                                                                 timeout=cfg.CLIENT_RPC_TIMEOUT)
+            except grpc.RpcError as e:
+                print(e)
+                print("Cannot connect to master. Check with the master to see if the file was successfully created")
+                return
             print(ret_status.message)
         else:
             request = dfs_file_path + ":1"
-            self.master_stub.file_create_status(hybrid_dfs_pb2.String(str=request))
+            try:
+                self.master_stub.file_create_status(hybrid_dfs_pb2.String(str=request), timeout=cfg.CLIENT_RPC_TIMEOUT)
+            except grpc.RpcError as e:
+                print(e)
             print("Error: Could not create file")
 
     def delete_file(self, file_path: str):
-        ret_status = self.master_stub.delete_file(hybrid_dfs_pb2.String(str=file_path))
+        try:
+            ret_status = self.master_stub.delete_file(hybrid_dfs_pb2.String(str=file_path),
+                                                      timeout=cfg.CLIENT_RPC_TIMEOUT)
+        except grpc.RpcError as e:
+            print(e)
+            return
         print(ret_status.message)
 
     def list_files(self, hidden: int):
-        data_iterator = self.master_stub.list_files(hybrid_dfs_pb2.String(str=str(hidden)))
-        for file in data_iterator:
-            print(file.str)
+        try:
+            data_iterator = self.master_stub.list_files(hybrid_dfs_pb2.String(str=str(hidden)),
+                                                        timeout=cfg.CLIENT_RPC_TIMEOUT)
+            for file in data_iterator:
+                print(file.str)
+        except (OSError, grpc.RpcError) as e:
+            print(e)
 
 
-def run():
+def run(command, args):
     with Client() as client:
-        client.create_file("/home/jade/use.py", "use")
-        client.list_files(1)
-        client.read_file("use", 0, 99)
-        # client.delete_file("use1")
+        # client.create_file("/home/jade/use.txt", "use")
+        # client.list_files(1)
+        # client.read_file("use", 0, 99)
+        # client.delete_file("use")
         # client.read_file("test.py", 3, 20)
+        if command == "create":
+            client.create_file(args[0], args[1])
+        elif command == "ls":
+            client.list_files(int(args[0]))
+        elif command == "read":
+            client.read_file(args[0], int(args[1]), int(args[2]))
+        elif command == "delete":
+            client.delete_file(args[0])
+        else:
+            print("Invalid Command")
 
 
 if __name__ == '__main__':
-    run()
+    run(sys.argv[1], sys.argv[2:])
