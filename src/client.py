@@ -83,10 +83,12 @@ class Client:
             request = chunk.handle + ":" + str(chunk_start) + ":" + str(chunk_end - chunk_start)
             success = False
             for loc in chunk.locs:
+                chunk_data = ""
                 data_iterator = self.chunk_stubs[loc].read_chunk(hybrid_dfs_pb2.String(str=request))
                 try:
                     for data in data_iterator:
-                        print(data.str, end='')
+                        chunk_data += data.str
+                    print(chunk_data, end='')
                     success = True
                     break
                 except (OSError, grpc.RpcError) as e:

@@ -21,11 +21,13 @@ service ChunkToClient {
 
 service ChunkToChunk {
   rpc create_chunk (stream String) returns (Status) {}
+  rpc read_entire_chunk (String) returns (stream String) {}
 }
 
 service ChunkToMaster {
   rpc commit_chunk (String) returns (Status) {}
   rpc delete_chunks (stream String) returns (Status) {}
+  rpc replicate_chunk (String) returns (Status) {}
   rpc heartbeat (String) returns (Status) {}
 }
 

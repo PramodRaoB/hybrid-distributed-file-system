@@ -128,6 +128,12 @@ class ChunkServer:
                 destination_stub = hybrid_dfs_pb2_grpc.ChunkToChunkStub(channel)
                 return destination_stub.create_chunk(self.write_and_yield_chunk(chunk_handle, loc_list, data_iterator))
 
+    def replicate_chunk(self, chunk_loc: str, chunk_handle: str):
+        with grpc.insecure_channel(chunk_loc) as channel:
+            stub = hybrid_dfs_pb2_grpc.ChunkToChunkStub(channel)
+            data_iterator = stub.read_entire_chunk(hybrid_dfs_pb2.String(str=chunk_handle))
+            return self.write_chunk(chunk_handle, data_iterator)
+
     def commit_chunk(self, chunk_handle: str):
         with self.visible_lock:
             if chunk_handle in self.is_visible.keys():
@@ -211,6 +217,10 @@ class ChunkToChunkServicer(hybrid_dfs_pb2_grpc.ChunkToChunkServicer):
         ret_status = self.server.create_chunk(chunk_handle, loc_list, request_iterator)
         return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
 
+    def read_entire_chunk(self, request, context):
+        chunk_handle = request.str
+        return self.server.read_chunk(chunk_handle, 0, cfg.CHUNK_SIZE)
+
 
 class ChunkToMasterServicer(hybrid_dfs_pb2_grpc.ChunkToMasterServicer):
     def __init__(self, server: ChunkServer):
@@ -222,6 +232,11 @@ class ChunkToMasterServicer(hybrid_dfs_pb2_grpc.ChunkToMasterServicer):
 
     def delete_chunks(self, request_iterator, context):
         ret_status = self.server.delete_chunks(request_iterator)
+        return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
+
+    def replicate_chunk(self, request, context):
+        chunk_loc, chunk_handle = request.str.split(":")
+        ret_status = self.server.replicate_chunk(chunk_loc, chunk_handle)
         return hybrid_dfs_pb2.Status(code=ret_status.code, message=ret_status.message)
 
     def heartbeat(self, request, context):
