@@ -48,6 +48,7 @@ class ChunkServer:
         self.wake_up(1)
 
     def wake_up(self, init: int):
+        print("Call to query master")
         curr_dir = os.fsencode(self.root_dir)
         chunks = [self.loc]
         try:
@@ -58,6 +59,8 @@ class ChunkServer:
             print(e)
             if init:
                 exit(1)
+            else:
+                return
         to_delete = []
         with grpc.insecure_channel(cfg.MASTER_LOC) as channel:
             master_stub = hybrid_dfs_pb2_grpc.MasterToChunkStub(channel)
@@ -68,6 +71,8 @@ class ChunkServer:
                 print("Cannot wake up when master is dead")
                 if init:
                     exit(1)
+                else:
+                    return
             try:
                 for request in resp:
                     chunk_handle, status = request.str.split(':')
@@ -84,6 +89,8 @@ class ChunkServer:
                 if init:
                     print("Cannot wake up when master is dead")
                     exit(1)
+                else:
+                    return
         self.delete_chunks(stream_list(to_delete))
 
     def read_chunk(self, chunk_handle, offset: int, num_bytes: int):
