@@ -5,6 +5,6 @@ compile: hybrid_dfs.proto
 
 clean:
 	rm -rf __pychache__
-	rm hybrid_dfs_pb2_grpc.py
-	rm hybrid_dfs_pb2.py
-	rm hybrid_dfs_pb2.pyi
+	rm -rf hybrid_dfs_pb2_grpc.py
+	rm -rf hybrid_dfs_pb2.py
+	rm -rf hybrid_dfs_pb2.pyi
