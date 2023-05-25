@@ -1,17 +1,13 @@
 import json
 import logging
 import logging.config
-import threading
 from collections import OrderedDict
 from enum import Enum
-from sys import stdout
 
 import jsonpickle
 
-import hybrid_dfs_pb2_grpc
-import hybrid_dfs_pb2
-
 import config as cfg
+import hybrid_dfs_pb2
 
 
 class Status:
@@ -83,7 +79,7 @@ class Logger:
             logging.config.dictConfig(json.loads(cfg.LOGGER_CONFIG))
             self.log = logging.getLogger("DFS_master")
             print(f"Master server started. Logging to {log_file}")
-        except EnvironmentError as e:
+        except EnvironmentError:
             print("Error: Failed to open log file")
 
     def add_file(self, file: File):

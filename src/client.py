@@ -1,19 +1,15 @@
 from __future__ import print_function
 
-import ast
-import logging
-import json
 import os.path
 import sys
 import time
 
+import grpc
 import jsonpickle
 
-import grpc
+import config as cfg
 import hybrid_dfs_pb2
 import hybrid_dfs_pb2_grpc
-from utils import Chunk
-import config as cfg
 
 
 def stream_chunk(file_path: str, chunk_index: int, chunk_handle: str, loc_list):
@@ -85,8 +81,8 @@ class Client:
                 chunk_start = offset % cfg.CHUNK_SIZE
             chunk_end = cfg.CHUNK_SIZE
             if index == end:
-                chunk_end = (offset + num_bytes) % cfg.CHUNK_SIZE
-            request = chunk.handle + ":" + str(chunk_start) + ":" + str(chunk_end - chunk_start)
+                chunk_end = (offset + num_bytes - 1) % cfg.CHUNK_SIZE
+            request = chunk.handle + ":" + str(chunk_start) + ":" + str(chunk_end - chunk_start + 1)
             success = False
             for loc in chunk.locs:
                 chunk_data = ""
@@ -98,7 +94,7 @@ class Client:
                     print(chunk_data, end='')
                     success = True
                     break
-                except (OSError, grpc.RpcError) as e:
+                except (OSError, grpc.RpcError):
                     pass
             if not success:
                 print("Error: Failed to fetch chunk. Aborting")

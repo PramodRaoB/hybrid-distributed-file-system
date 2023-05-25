@@ -3,19 +3,15 @@ import random
 import threading
 import time
 import uuid
-from collections import OrderedDict
 from concurrent import futures
-import logging
-import json
-from copy import deepcopy
-
-import jsonpickle
 
 import grpc
+import jsonpickle
+
+import config as cfg
 import hybrid_dfs_pb2
 import hybrid_dfs_pb2_grpc
 from utils import Status, Chunk, File, stream_list, ChunkStatus, FileStatus, Logger
-import config as cfg
 
 
 def get_new_handle():
@@ -151,8 +147,7 @@ class MasterServer:
             with grpc.insecure_channel(loc) as channel:
                 chunk_stub = hybrid_dfs_pb2_grpc.ChunkToMasterStub(channel)
                 try:
-                    ret_status = chunk_stub.commit_chunk(hybrid_dfs_pb2.String(str=chunk.handle),
-                                                         timeout=cfg.MASTER_RPC_TIMEOUT)
+                    chunk_stub.commit_chunk(hybrid_dfs_pb2.String(str=chunk.handle), timeout=cfg.MASTER_RPC_TIMEOUT)
                 except grpc.RpcError as e:
                     self.logger.log.error(e)
         return Status(0, "Committed chunks")
@@ -247,10 +242,10 @@ class MasterServer:
             with grpc.insecure_channel(loc) as channel:
                 chunk_stub = hybrid_dfs_pb2_grpc.ChunkToMasterStub(channel)
                 try:
-                    ret_status = chunk_stub.heartbeat(hybrid_dfs_pb2.String(str=""), timeout=cfg.HEARTBEAT_TIMEOUT)
+                    chunk_stub.heartbeat(hybrid_dfs_pb2.String(str=""), timeout=cfg.HEARTBEAT_TIMEOUT)
                     if loc not in self.available_chunk_servers:
                         self.available_chunk_servers.append(loc)
-                except grpc.RpcError as e:
+                except grpc.RpcError:
                     if loc in self.available_chunk_servers:
                         self.available_chunk_servers.remove(loc)
 
@@ -414,7 +409,7 @@ def serve():
                 master_server.rebalance()
                 super_heartbeats_done = 0
 
-    except KeyboardInterrupt as e:
+    except KeyboardInterrupt:
         pass
 
 

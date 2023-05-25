@@ -8,10 +8,10 @@ from pathlib import Path
 import grpc
 import jsonpickle
 
+import config as cfg
 import hybrid_dfs_pb2
 import hybrid_dfs_pb2_grpc
 from utils import Status, stream_list, ChunkStatus
-import config as cfg
 
 
 def stream_chunk(file_path: str, offset: int, num_bytes: int):
@@ -285,7 +285,7 @@ def serve():
                 chunk_server.wake_up(0)
                 cleanups_done = 0
 
-    except KeyboardInterrupt as e:
+    except KeyboardInterrupt:
         pass
 
 
