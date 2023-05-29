@@ -207,11 +207,6 @@ class Client:
 
 def run(command, args):
     with Client() as client:
-        # client.create_file("/home/jade/use.txt", "use")
-        # client.list_files(1)
-        # client.read_file("use", 0, 99)
-        # client.delete_file("use")
-        # client.read_file("test.py", 3, 20)
         if command == "create":
             client.create_file(args[0], args[1])
         elif command == "ls":
